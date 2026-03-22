@@ -1,6 +1,7 @@
 /**
  * Slice для гильдии - управление expeditions и контрактами
  * Версия 2.0 — Расширенная система искателей
+ * Использует utils для генерации
  */
 
 import {
@@ -55,6 +56,9 @@ import {
   getContractTierName,
   getContractTierIcon,
 } from '@/lib/contract-manager'
+
+// Импорт утилит
+import { generateId } from '@/lib/store-utils/generators'
 
 // ================================
 // Тип результата экспедиции
@@ -160,12 +164,6 @@ export type GuildActions = {
   getContractedAdventurer: (id: string) => ContractedAdventurer | undefined
   canSelectAdventurer: (adventurer: Adventurer, expedition: ExpeditionTemplate) => { can: boolean; reason: string }
 }
-
-// ================================
-// Генерация ID
-// ================================
-
-const generateId = (): string => Math.random().toString(36).substring(2, 9)
 
 // ================================
 // Функции-помощники (чистые функции)
