@@ -366,3 +366,9 @@ export const createWorkersSlice: StateCreator<
     return Math.floor(baseCost * costMultiplier)
   },
 })
+
+// ================================
+// ЭКСПОРТ ТИПОВ (для game-store)
+// ================================
+
+export type { Worker, WorkerStats, ProductionBuilding, WorkerClassData }

@@ -184,3 +184,9 @@ export const createResourcesSlice: StateCreator<
     return RESOURCE_SELL_PRICES[resource] || 1
   },
 })
+
+// ================================
+// ЭКСПОРТ ТИПОВ (для game-store)
+// ================================
+
+export type { Resources, ResourceKey, CraftingCost }

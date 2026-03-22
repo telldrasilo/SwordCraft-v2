@@ -385,3 +385,14 @@ export const createCraftSlice: StateCreator<
 
 // Реэкспорт утилит для использования в game-store
 export { generateId, getQualityGrade, getQualityMultiplier }
+
+// Экспорт типов для использования в game-store
+export type {
+  ActiveCraft,
+  ActiveRefining,
+  WeaponInventory,
+  UnlockedRecipes,
+  RecipeSource,
+  WeaponEnchantment,
+  WeaponMaterialUsed,
+}
