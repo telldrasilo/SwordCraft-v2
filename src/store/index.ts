@@ -40,11 +40,10 @@ export {
   workerClassData,
 } from './game-store-composed-v2'
 
-// Типы из game-store-composed (для обратной совместимости)
-export type { NPCOrder, TutorialState } from './game-store-composed'
-
-// Hooks (утилиты) - теперь из v2
-export { useFormattedResources, useWorkerHireCost } from './game-store-composed-v2'
-
-// Типы из workers-slice
+// Типы из slices
+export type { NPCOrder, OrderStatus, OrderBonusItem } from './slices/orders-slice'
+export type { TutorialState } from './slices/tutorial-slice'
 export type { WorkerStats, WorkerClass } from './slices/workers-slice'
+
+// Hooks (утилиты) - из v2
+export { useFormattedResources, useWorkerHireCost } from './game-store-composed-v2'

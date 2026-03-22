@@ -129,43 +129,22 @@ import {
 import { ExpeditionResult } from './slices/guild-slice'
 
 // ================================
+// ДОПОЛНИТЕЛЬНЫЕ SLICE IMPORTS
+// ================================
+
+import { createOrdersSlice } from './slices/orders-slice'
+import type { OrdersSlice, NPCOrder } from './slices/orders-slice'
+import { initialOrdersState } from './slices/orders-slice'
+
+import { createTutorialSlice } from './slices/tutorial-slice'
+import type { TutorialSlice, TutorialState, TutorialActions } from './slices/tutorial-slice'
+import { initialTutorialState } from './slices/tutorial-slice'
+
+// ================================
 // ОСТАВШИЕСЯ ТИПЫ (не в slices)
 // ================================
 
 export type GameScreen = 'forge' | 'resources' | 'workers' | 'shop' | 'guild' | 'dungeons' | 'altar'
-
-export interface NPCOrder {
-  id: string
-  clientName: string
-  clientTitle: string
-  clientIcon: string
-  weaponType: string
-  material?: string
-  minQuality: number
-  minAttack?: number
-  goldReward: number
-  fameReward: number
-  bonusItems?: { resource: string; amount: number }[]
-  deadline: number
-  status: 'available' | 'in_progress' | 'completed' | 'expired'
-  acceptedAt?: number
-  requiredLevel: number
-  requiredFame: number
-}
-
-export interface TutorialState {
-  isActive: boolean
-  currentStep: number
-  completedSteps: string[]
-  skipped: boolean
-}
-
-const initialTutorial: TutorialState = {
-  isActive: true,
-  currentStep: 0,
-  completedSteps: [],
-  skipped: false,
-}
 
 // ================================
 // CROSS-SLICE ACTIONS INTERFACE
@@ -275,27 +254,24 @@ interface CrossSliceActions {
 
 interface AdditionalState {
   currentScreen: GameScreen
-  orders: NPCOrder[]
-  activeOrderId: string | null
-  tutorial: TutorialState
   guild: GuildState
   knownAdventurers: KnownAdventurer[]
+  // Tutorial state как вложенный объект (для совместимости с компонентами)
+  tutorial: TutorialState
 }
 
 const initialAdditionalState: AdditionalState = {
   currentScreen: 'forge',
-  orders: [],
-  activeOrderId: null,
-  tutorial: initialTutorial,
   guild: initialGuildState,
   knownAdventurers: [],
+  tutorial: initialTutorialState,
 }
 
 // ================================
 // FULL STORE TYPE
 // ================================
 
-type GameStore = PlayerSlice & ResourcesSlice & WorkersSlice & CraftSlice & AdditionalState & CrossSliceActions
+type GameStore = PlayerSlice & ResourcesSlice & WorkersSlice & CraftSlice & OrdersSlice & TutorialActions & AdditionalState & CrossSliceActions
 
 // ================================
 // STORE CREATION
@@ -316,6 +292,42 @@ export const useGameStore = create<GameStore>()(
       
       // Craft slice
       ...createCraftSlice(set as any, get as any, {} as any),
+
+      // Orders slice
+      ...createOrdersSlice(set as any, get as any, {} as any),
+
+      // Tutorial actions (без state - state в AdditionalState)
+      nextTutorialStep: () => set((state) => {
+        const nextStep = state.tutorial.currentStep + 1
+        return {
+          tutorial: {
+            ...state.tutorial,
+            isActive: nextStep < 6, // TUTORIAL_STEPS.length
+            currentStep: nextStep,
+          }
+        }
+      }),
+      
+      skipTutorial: () => set((state) => ({
+        tutorial: { ...state.tutorial, isActive: false, skipped: true }
+      })),
+      
+      completeTutorialStep: (stepId) => set((state) => {
+        if (state.tutorial.completedSteps.includes(stepId)) return state
+        return {
+          tutorial: {
+            ...state.tutorial,
+            completedSteps: [...state.tutorial.completedSteps, stepId],
+          }
+        }
+      }),
+      
+      isTutorialActive: () => {
+        const state = get()
+        return state.tutorial.isActive && !state.tutorial.skipped
+      },
+      
+      resetTutorial: () => set({ tutorial: initialTutorialState }),
 
       // === ADDITIONAL STATE ===
       ...initialAdditionalState,
@@ -752,22 +764,26 @@ export const useGameStore = create<GameStore>()(
         return true
       },
 
-      // Orders (TODO: перенести в orders-slice)
-      generateOrder: () => null,
-      acceptOrder: () => false,
-      completeOrder: () => false,
-      expireOrder: () => {},
-      getActiveOrder: () => undefined,
-
-      // Tutorial (TODO: перенести в tutorial-slice)
-      nextTutorialStep: () => set((s) => ({
-        tutorial: { ...s.tutorial, currentStep: s.tutorial.currentStep + 1 }
-      })),
-      skipTutorial: () => set({ tutorial: { isActive: false, currentStep: 0, completedSteps: [], skipped: true } }),
-      completeTutorialStep: (stepId) => set((s) => ({
-        tutorial: { ...s.tutorial, completedSteps: [...s.tutorial.completedSteps, stepId] }
-      })),
-      isTutorialActive: () => get().tutorial.isActive && !get().tutorial.skipped,
+      // Orders - delegating to slice
+      generateOrder: () => {
+        const state = get()
+        return state.generateOrder(state.player.level, state.player.fame)
+      },
+      acceptOrder: (orderId) => get().acceptOrder(orderId),
+      completeOrder: (orderId, weaponId) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon) return false
+        const result = state.completeOrder(orderId, weaponId, {
+          quality: weapon.quality,
+          attack: weapon.attack,
+          type: weapon.type,
+          recipeId: weapon.recipeId,
+        })
+        return result.success
+      },
+      expireOrder: (orderId) => get().expireOrder(orderId),
+      getActiveOrder: () => get().getActiveOrder(),
 
       // Enchantments (simple)
       enchantWeapon: (weaponId, enchantmentId) => {
