@@ -1,0 +1,382 @@
+// SwordCraft: Idle Forge - Database Schema
+// Фаза 1, Спринт 1: Базовая схема данных
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ИГРОК
+// ============================================
+model Player {
+  id            String   @id @default(cuid())
+  name          String
+  gold          Int      @default(100)
+  soulEssence   Int      @default(0)
+  manaCrystals  Int      @default(0)
+  gems          Int      @default(0)
+  level         Int      @default(1)
+  experience    Int      @default(0)
+  prestigeLevel Int      @default(0)
+  knowledgeSparks Int    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  resources     Resource[]
+  workers       Worker[]
+  weapons       Weapon[]
+  adventurers   Adventurer[]
+  expeditions   Expedition[]
+  buildings     Building[]
+  achievements  PlayerAchievement[]
+}
+
+// ============================================
+// РЕСУРСЫ (Базовые, Продвинутые, Магические)
+// ============================================
+model Resource {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  // Тип ресурса
+  type         String   // WOOD, STONE, COPPER_ORE, IRON_ORE, COAL, TIN, LEATHER, etc.
+  category     String   // BASIC, ADVANCED, MAGICAL, LEGENDARY
+  tier         Int      @default(1)
+  
+  // Количество
+  amount       Int      @default(0)
+  maxStorage   Int      @default(1000)
+  
+  // Темп добычи (в час)
+  productionRate Float  @default(0)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([playerId, type])
+}
+
+// ============================================
+// РАБОЧИЕ
+// ============================================
+model Worker {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  // Класс рабочего
+  class        String   // MINER, LUMBERJACK, STONECUTTER, DWARF_SMITH, ELEMENTAL, etc.
+  tier         Int      @default(1)
+  
+  // Характеристики
+  efficiency   Int      @default(50)   // 1-100
+  endurance    Int      @default(50)   // 1-100
+  skill        Int      @default(50)   // 1-100
+  loyalty      Int      @default(50)   // 1-100
+  level        Int      @default(1)    // 1-50
+  experience   Int      @default(0)
+  
+  // Назначение
+  assignedTo   String?  // Тип ресурса, который добывает
+  isWorking    Boolean  @default(false)
+  
+  // Стоимость содержания
+  wage         Int      @default(10)   // золото/час
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// ОРУЖИЕ
+// ============================================
+model Weapon {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  // Тип и материал
+  type         String   // SWORD, AXE, DAGGER, SPEAR, MACE, BOW, STAFF, HAMMER
+  material     String   // IRON, STEEL, SILVER, TITANIUM, OBSIDIAN, etc.
+  
+  // Качество и редкость
+  quality      String   @default("STANDARD")  // SHODDY, STANDARD, FINE, SUPERIOR, MASTERWORK, LEGENDARY
+  rarity       String   @default("COMMON")    // COMMON, UNCOMMON, RARE, EPIC, LEGENDARY, ARTIFACT
+  
+  // Первичные характеристики
+  damage       Int      @default(10)
+  speed        Int      @default(100)  // процент от базового
+  critChance   Int      @default(5)    // процент
+  critDamage   Int      @default(150)  // процент
+  accuracy     Int      @default(90)   // процент
+  block        Int      @default(0)    // процент
+  
+  // Вторичные характеристики
+  armorPen     Int      @default(0)    // процент
+  bleed        Int      @default(0)    // процент
+  stun         Int      @default(0)    // процент
+  lifeSteal    Int      @default(0)    // процент
+  
+  // Зачарования
+  enchantSlots Int      @default(0)
+  enchantments String?  // JSON с зачарованиями
+  
+  // Душевная память
+  killCount    Int      @default(0)
+  soulMemory   String?  // JSON с типами убитых врагов
+  heroSparks   Int      @default(0)
+  
+  // Состояние
+  durability   Int      @default(100)
+  maxDurability Int     @default(100)
+  isEquipped   Boolean  @default(false)
+  equippedBy   String?  // ID искателя
+  
+  // Стоимость
+  baseValue    Int      @default(100)  // в золоте
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// ИСКАТЕЛИ ПРИКЛЮЧЕНИЙ
+// ============================================
+model Adventurer {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  // Класс и тир
+  class        String   // WARRIOR, ROGUE, RANGER, MAGE, PALADIN, BARBARIAN, MONK
+  tier         String   @default("NOVICE")  // NOVICE, APPRENTICE, VETERAN, HERO, LEGEND
+  level        Int      @default(1)
+  experience   Int      @default(0)
+  
+  // Характеристики
+  health       Int      @default(100)
+  maxHealth    Int      @default(100)
+  attack       Int      @default(10)
+  defense      Int      @default(5)
+  
+  // Предпочтения
+  preferredWeapons String?  // JSON с типами оружия
+  
+  // Преданность
+  loyalty      Int      @default(50)
+  contractEnd  DateTime?
+  
+  // Текущее состояние
+  status       String   @default("AVAILABLE")  // AVAILABLE, IN_EXPEDITION, RESTING
+  currentExpeditionId String?
+  
+  // Relations
+  expeditions  Expedition[]
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// ПОДЗЕМЕЛЬЯ
+// ============================================
+model Dungeon {
+  id           String   @id @default(cuid())
+  
+  // Название и описание
+  name         String
+  description  String?
+  
+  // Характеристики
+  tier         Int      @default(1)
+  minDuration  Int      // в минутах
+  maxDuration  Int      // в минутах
+  
+  // Враги (JSON)
+  enemies      String   // JSON с типами врагов и их вероятностями
+  
+  // Награды
+  baseGoldMin  Int      @default(10)
+  baseGoldMax  Int      @default(100)
+  baseXpMin    Int      @default(5)
+  baseXpMax    Int      @default(50)
+  
+  // Требования
+  minWeaponLevel Int    @default(1)
+  
+  // События (JSON)
+  events       String?  // JSON с возможными событиями
+  
+  // Relations
+  expeditions  Expedition[]
+  
+  isActive     Boolean  @default(true)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// ЭКСПЕДИЦИИ
+// ============================================
+model Expedition {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  // Подземелье и искатель
+  dungeonId    String
+  dungeon      Dungeon  @relation(fields: [dungeonId], references: [id])
+  adventurerId String
+  adventurer   Adventurer @relation(fields: [adventurerId], references: [id])
+  
+  // Оружие
+  weaponIds    String   // JSON с ID оружия
+  
+  // Время
+  startedAt    DateTime @default(now())
+  expectedEnd  DateTime
+  completedAt  DateTime?
+  
+  // Статус
+  status       String   @default("IN_PROGRESS")  // IN_PROGRESS, SUCCESS, PARTIAL, FAILED
+  
+  // Результаты (заполняется после завершения)
+  goldEarned   Int      @default(0)
+  xpEarned     Int      @default(0)
+  soulsEarned  Int      @default(0)
+  loot         String?  // JSON с добычей
+  events       String?  // JSON с произошедшими событиями
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// ЗДАНИЯ
+// ============================================
+model Building {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  // Тип здания
+  type         String   // FORGE, MINE, LUMBER_CAMP, GUILD_HALL, SOUL_ALTAR, ENCHANTER_TOWER, WAREHOUSE
+  
+  // Уровень
+  level        Int      @default(1)
+  maxLevel     Int      @default(10)
+  
+  // Бонусы (зависят от уровня)
+  bonusSpeed   Int      @default(0)   // процент
+  bonusQuality Int      @default(0)   // процент
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([playerId, type])
+}
+
+// ============================================
+// ДОСТИЖЕНИЯ
+// ============================================
+model Achievement {
+  id           String   @id @default(cuid())
+  
+  // Идентификатор
+  key          String   @unique
+  name         String
+  description  String
+  
+  // Тип
+  category     String   // CRAFTING, COMBAT, ECONOMY, PRESTIGE
+  
+  // Требования
+  requirement  String   // JSON с условиями
+  
+  // Награда
+  rewardGold   Int      @default(0)
+  rewardSoul   Int      @default(0)
+  rewardGems   Int      @default(0)
+  
+  // Relations
+  playerAchievements PlayerAchievement[]
+  
+  createdAt    DateTime @default(now())
+}
+
+model PlayerAchievement {
+  id           String   @id @default(cuid())
+  playerId     String
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement  Achievement @relation(fields: [achievementId], references: [id])
+  
+  completedAt  DateTime @default(now())
+
+  @@unique([playerId, achievementId])
+}
+
+// ============================================
+// НАВЫКИ КУЗНЕЦА
+// ============================================
+model SmithSkill {
+  id           String   @id @default(cuid())
+  
+  // Ветвь и название
+  branch       String   // FORGING, METALLURGY, TEMPERING, MYSTICISM, MANAGEMENT
+  key          String   @unique
+  name         String
+  description  String
+  
+  // Уровни
+  maxLevel     Int      @default(5)
+  
+  // Стоимость за уровень (JSON)
+  costPerLevel String
+  
+  // Эффект за уровень
+  effect       String   // JSON с эффектами
+  
+  // Зависимости
+  requires     String?  // JSON с требуемыми навыками
+  
+  createdAt    DateTime @default(now())
+}
+
+// ============================================
+// РЕЦЕПТЫ КРАФТА
+// ============================================
+model CraftingRecipe {
+  id           String   @id @default(cuid())
+  
+  // Тип оружия
+  weaponType   String
+  
+  // Материалы (JSON)
+  materials    String   // JSON: [{type: "IRON_ORE", amount: 5}, ...]
+  
+  // Базовые характеристики
+  baseDamage   Int
+  baseSpeed    Int
+  baseCrit     Int
+  
+  // Требования
+  requiredLevel Int     @default(1)
+  requiredSkills String?
+  
+  // Стоимость
+  goldCost     Int      @default(0)
+  
+  // Время крафта (секунды)
+  craftTime    Int      @default(30)
+  
+  createdAt    DateTime @default(now())
+}
