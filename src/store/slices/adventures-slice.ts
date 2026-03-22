@@ -1,9 +1,11 @@
 /**
  * Adventures Slice
  * Управление приключениями и подземельями
+ * Использует store-utils для генерации
  */
 
 import { StateCreator } from 'zustand'
+import { generateId } from '@/lib/store-utils/generators'
 
 // ================================
 // ТИПЫ
@@ -129,8 +131,6 @@ export const MAX_CONCURRENT_ADVENTURES = 3
 // ================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ================================
-
-const generateId = (): string => Math.random().toString(36).substring(2, 9)
 
 /**
  * Генерация событий для приключения

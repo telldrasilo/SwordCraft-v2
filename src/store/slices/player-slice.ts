@@ -1,9 +1,16 @@
 /**
  * Player Slice
  * Управление данными игрока: уровень, опыт, слава, титул
+ * Использует player-utils для бизнес-логики
  */
 
 import { StateCreator } from 'zustand'
+import {
+  getTitleByLevel,
+  getExperienceForLevel,
+  addExperience as addExperienceUtil,
+  addFame as addFameUtil,
+} from '@/lib/store-utils/player-utils'
 
 // ================================
 // ТИПЫ
@@ -78,32 +85,6 @@ export const initialStatistics: GameStatistics = {
   enchantmentsApplied: 0,
 }
 
-// Титулы по уровням
-const PLAYER_TITLES: { minLevel: number; title: string }[] = [
-  { minLevel: 50, title: 'Легендарный мастер' },
-  { minLevel: 40, title: 'Великий мастер' },
-  { minLevel: 30, title: 'Мастер-кузнец' },
-  { minLevel: 20, title: 'Опытный кузнец' },
-  { minLevel: 10, title: 'Подмастерье' },
-  { minLevel: 5, title: 'Ученик' },
-  { minLevel: 1, title: 'Новичок' },
-]
-
-// ================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ================================
-
-function getTitleByLevelInternal(level: number): string {
-  for (const { minLevel, title } of PLAYER_TITLES) {
-    if (level >= minLevel) return title
-  }
-  return 'Новичок'
-}
-
-function getExperienceForLevelInternal(level: number): number {
-  return Math.floor(100 * Math.pow(1.5, level - 1))
-}
-
 // ================================
 // SLICE
 // ================================
@@ -124,29 +105,22 @@ export const createPlayerSlice: StateCreator<
   })),
 
   addExperience: (amount) => set((state) => {
-    let newExp = state.player.experience + amount
-    let newLevel = state.player.level
-    let expToNext = state.player.experienceToNextLevel
-    let newFame = state.player.fame
-
-    // Обработка повышения уровня
-    while (newExp >= expToNext) {
-      newExp -= expToNext
-      newLevel++
-      expToNext = Math.floor(expToNext * 1.5)
-      newFame += 10 // Бонус славы за уровень
-    }
-
-    const newTitle = getTitleByLevelInternal(newLevel)
+    const result = addExperienceUtil(
+      state.player.experience,
+      state.player.level,
+      state.player.experienceToNextLevel,
+      state.player.fame,
+      amount
+    )
 
     return {
       player: {
         ...state.player,
-        experience: newExp,
-        level: newLevel,
-        experienceToNextLevel: expToNext,
-        fame: newFame,
-        title: newTitle,
+        experience: result.newExperience,
+        level: result.newLevel,
+        experienceToNextLevel: result.newExperienceToNext,
+        fame: result.fameGained > 0 ? state.player.fame + result.fameGained : state.player.fame,
+        title: result.newTitle,
       }
     }
   }),
@@ -154,7 +128,7 @@ export const createPlayerSlice: StateCreator<
   addFame: (amount) => set((state) => ({
     player: {
       ...state.player,
-      fame: state.player.fame + amount
+      fame: addFameUtil(state.player.fame, amount)
     }
   })),
 
@@ -165,7 +139,13 @@ export const createPlayerSlice: StateCreator<
     }
   })),
 
-  getTitleByLevel: (level) => getTitleByLevelInternal(level),
+  getTitleByLevel: (level) => getTitleByLevel(level),
 
-  getExperienceForLevel: (level) => getExperienceForLevelInternal(level),
+  getExperienceForLevel: (level) => getExperienceForLevel(level),
 })
+
+// ================================
+// ЭКСПОРТ ТИПОВ (для game-store)
+// ================================
+
+export type { Player, GameStatistics, PlayerState, PlayerActions }

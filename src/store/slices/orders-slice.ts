@@ -1,10 +1,14 @@
 /**
  * Orders Slice
  * Управление заказами NPC (рыночные заказы)
+ * Использует utils для генерации
  */
 
 import { StateCreator } from 'zustand'
 import { ResourceKey } from './resources-slice'
+
+// Импорт утилит
+import { generateId, generateClientName } from '@/lib/store-utils/generators'
 
 // ================================
 // ТИПЫ
@@ -77,24 +81,8 @@ export const initialOrdersState: OrdersState = {
 }
 
 // ================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ДАННЫЕ ДЛЯ ГЕНЕРАЦИИ
 // ================================
-
-const generateId = (): string => Math.random().toString(36).substring(2, 9)
-
-// Имена клиентов
-const clientNames = [
-  'Сэр Гэвин', 'Леди Элеонора', 'Барон Реджинальд', 'Графиня Изабель',
-  'Капитан Маркус', 'Мейстер Аларик', 'Рыцарь Эдмунд', 'Принцесса Арианна',
-  'Герцог Валериус', 'Воевода Борислав', 'Князь Ярослав', 'Боярыня Марфа'
-]
-
-const clientTitles = [
-  'Благородный', 'Справедливый', 'Храбрый', 'Мудрый',
-  'Влиятельный', 'Богатый', 'Известный', 'Почтенный'
-]
-
-const clientIcons = ['👑', '⚔️', '🛡️', '🏰', '⚜️', '🎖️', '💎', '🏆']
 
 const weaponTypes = ['sword', 'dagger', 'axe', 'mace', 'spear', 'hammer']
 
@@ -126,10 +114,8 @@ export const createOrdersSlice: StateCreator<
     const lastOrder = state.orders[state.orders.length - 1]
     if (lastOrder && Date.now() - lastOrder.deadline < -250000) return null
 
-    // Генерируем заказ
-    const clientName = clientNames[Math.floor(Math.random() * clientNames.length)]
-    const clientTitle = clientTitles[Math.floor(Math.random() * clientTitles.length)]
-    const clientIcon = clientIcons[Math.floor(Math.random() * clientIcons.length)]
+    // Генерируем клиента через утилиту
+    const client = generateClientName()
     const weaponType = weaponTypes[Math.floor(Math.random() * weaponTypes.length)]
     const material = materials[Math.floor(Math.random() * materials.length)]
 
@@ -141,9 +127,9 @@ export const createOrdersSlice: StateCreator<
 
     const order: NPCOrder = {
       id: generateId(),
-      clientName,
-      clientTitle,
-      clientIcon,
+      clientName: client.name,
+      clientTitle: client.title,
+      clientIcon: client.icon,
       weaponType,
       material,
       minQuality,
@@ -157,7 +143,7 @@ export const createOrdersSlice: StateCreator<
     }
 
     // Проверяем, нет ли уже такого клиента
-    if (state.orders.some(o => o.clientName === clientName && o.status === 'available')) {
+    if (state.orders.some(o => o.clientName === client.name && o.status === 'available')) {
       return null
     }
 

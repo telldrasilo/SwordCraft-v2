@@ -1,10 +1,26 @@
 /**
  * Workers Slice
  * Управление рабочими и производственными зданиями
+ * Использует worker-utils для бизнес-логики
  */
 
 import { StateCreator } from 'zustand'
 import { ResourceKey } from './resources-slice'
+
+// Импорт утилит
+import {
+  generateId,
+  generateWorkerName,
+  generateStatBonus,
+} from '@/lib/store-utils/generators'
+import {
+  MAX_WORKER_LEVEL,
+} from '@/lib/store-utils/constants'
+import {
+  getWorkerExpToLevel,
+  calculateExpMultiplier,
+  calculateAverageQuality,
+} from '@/lib/store-utils/worker-utils'
 
 // ================================
 // ТИПЫ
@@ -176,28 +192,6 @@ export const initialBuildings: ProductionBuilding[] = [
 ]
 
 // ================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ================================
-
-const generateId = (): string => Math.random().toString(36).substring(2, 9)
-
-const workerNames = [
-  'Грегор', 'Иван', 'Борис', 'Виктор', 'Алексей', 'Дмитрий', 
-  'Николай', 'Мария', 'Анна', 'Елена', 'Пётр', 'Сергей', 
-  'Андрей', 'Михаил', 'Артём', 'Максим'
-]
-
-const generateWorkerName = (): string => {
-  return workerNames[Math.floor(Math.random() * workerNames.length)]
-}
-
-const MAX_WORKER_LEVEL = 50
-
-const getExpForWorkerLevel = (level: number): number => {
-  return 100 + level * 50
-}
-
-// ================================
 // SLICE
 // ================================
 
@@ -279,24 +273,24 @@ export const createWorkersSlice: StateCreator<
     }))
   })),
 
-  // Actions - Опыт
+  // Actions - Опыт (использует utils)
   addWorkerExperience: (workerId, amount) => set((state) => {
     const worker = state.workers.find(w => w.id === workerId)
     if (!worker) return state
     
-    // Интеллект влияет на скорость прокачки
-    const expMultiplier = 1 + (worker.stats.intelligence - 25) / 100
+    // Используем утилиту для расчёта множителя опыта
+    const expMultiplier = calculateExpMultiplier(worker.stats.intelligence)
     const actualExp = amount * expMultiplier
     
     const newExperience = worker.experience + actualExp
-    const expToLevel = getExpForWorkerLevel(worker.level)
+    const expToLevel = getWorkerExpToLevel(worker.level)
     
     if (newExperience >= expToLevel && worker.level < MAX_WORKER_LEVEL) {
       const newLevel = worker.level + 1
       const leftoverExp = newExperience - expToLevel
       
-      // Улучшение характеристик при повышении уровня (+2-5% к каждой)
-      const statBonus = 1 + (0.02 + Math.random() * 0.03)
+      // Используем утилиту для генерации бонуса
+      const statBonus = generateStatBonus()
       
       return {
         workers: state.workers.map(w => w.id === workerId ? {
@@ -355,12 +349,9 @@ export const createWorkersSlice: StateCreator<
     )
   })),
 
-  // Actions - Утилиты
+  // Actions - Утилиты (использует utils)
   getWorkersQuality: () => {
-    const state = get()
-    const blacksmiths = state.workers.filter(w => w.class === 'blacksmith' && w.assignment === 'forge')
-    if (blacksmiths.length === 0) return 20
-    return blacksmiths.reduce((sum, w) => sum + w.stats.quality, 0) / blacksmiths.length
+    return calculateAverageQuality(get().workers)
   },
 
   getWorkersByAssignment: (assignment) => {
@@ -375,3 +366,9 @@ export const createWorkersSlice: StateCreator<
     return Math.floor(baseCost * costMultiplier)
   },
 })
+
+// ================================
+// ЭКСПОРТ ТИПОВ (для game-store)
+// ================================
+
+export type { Worker, WorkerStats, ProductionBuilding, WorkerClassData }

@@ -1,9 +1,11 @@
 /**
  * Resources Slice
  * Управление всеми ресурсами игры
+ * Использует constants для цен продажи
  */
 
 import { StateCreator } from 'zustand'
+import { RESOURCE_SELL_PRICES } from '@/lib/store-utils/constants'
 
 // ================================
 // ТИПЫ
@@ -90,27 +92,20 @@ export const initialResources: Resources = {
   stoneBlocks: 5,
 }
 
-// Цены продажи ресурсов
-const RESOURCE_SELL_PRICES: Partial<Record<ResourceKey, number>> = {
-  wood: 0.3,
-  stone: 0.4,
-  iron: 2,
-  coal: 1.5,
-  copper: 3,
-  tin: 3,
-  silver: 8,
-  goldOre: 15,
-  mithril: 50,
-  ironIngot: 4,
-  copperIngot: 6,
-  tinIngot: 6,
-  bronzeIngot: 10,
-  steelIngot: 15,
-  silverIngot: 16,
-  goldIngot: 30,
-  mithrilIngot: 100,
-  planks: 0.5,
-  stoneBlocks: 0.6,
+// ================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ================================
+
+/**
+ * Проверить наличие ресурсов
+ */
+function checkCanAfford(resources: Resources, cost: CraftingCost): boolean {
+  for (const [resource, amount] of Object.entries(cost)) {
+    if ((resources[resource as ResourceKey] || 0) < (amount || 0)) {
+      return false
+    }
+  }
+  return true
 }
 
 // ================================
@@ -150,17 +145,12 @@ export const createResourcesSlice: StateCreator<
 
   canAfford: (cost) => {
     const state = get()
-    for (const [resource, amount] of Object.entries(cost)) {
-      if ((state.resources[resource as ResourceKey] || 0) < (amount || 0)) {
-        return false
-      }
-    }
-    return true
+    return checkCanAfford(state.resources, cost)
   },
 
   spendResources: (cost) => {
     const state = get()
-    if (!state.canAfford(cost)) return false
+    if (!checkCanAfford(state.resources, cost)) return false
 
     const newResources = { ...state.resources }
     for (const [resource, amount] of Object.entries(cost)) {
@@ -196,17 +186,7 @@ export const createResourcesSlice: StateCreator<
 })
 
 // ================================
-// СЕЛЕКТОРЫ (для оптимизации)
+// ЭКСПОРТ ТИПОВ (для game-store)
 // ================================
 
-/** Хук для получения конкретного ресурса */
-export const useResource = (resource: ResourceKey): number => {
-  // Этот селектор будет использоваться в компонентах
-  // Возвращает только нужный ресурс, не вызывая лишних ре-рендеров
-  return 0 // Заглушка, реальная реализация через useGameStore
-}
-
-/** Хук для проверки доступности стоимости */
-export const useCanAfford = (cost: CraftingCost): boolean => {
-  return false // Заглушка
-}
+export type { Resources, ResourceKey, CraftingCost }
