@@ -1,9 +1,14 @@
 /**
  * Enchantments Slice
  * Управление зачарованиями и жертвоприношениями оружия
+ * Использует utils для генерации и расчётов
  */
 
 import { StateCreator } from 'zustand'
+
+// Импорт утилит
+import { generateId } from '@/lib/store-utils/generators'
+import { calculateSacrificeValue, canAffordEnchantment as canAffordEnchantmentUtil } from '@/lib/store-utils/enchantment-utils'
 
 // ================================
 // ТИПЫ
@@ -69,59 +74,11 @@ export const initialEnchantmentsState: EnchantmentsState = {
 export const MAX_ENCHANTMENTS_PER_WEAPON = 3
 
 // ================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ЭКСПОРТ УТИЛИТ (для совместимости)
 // ================================
 
-const generateId = (): string => Math.random().toString(36).substring(2, 9)
-
-/**
- * Расчёт ценности жертвоприношения
- */
-export function calculateSacrificeValue(
-  quality: number,
-  tier: number,
-  warSoul: number,
-  epicMultiplier: number
-): SacrificeResult {
-  // Базовая эссенция от качества
-  let soulEssence = Math.floor(quality / 10)
-  
-  // Бонус от тира
-  soulEssence += tier * 2
-  
-  // Бонус от Души Войны
-  soulEssence += Math.floor(warSoul / 5)
-  
-  // Бонус от эпичности
-  soulEssence = Math.floor(soulEssence * epicMultiplier)
-  
-  // Бонусное золото
-  const bonusGold = Math.floor(quality * tier * epicMultiplier)
-  
-  return {
-    soulEssence: Math.max(1, soulEssence),
-    bonusGold,
-  }
-}
-
-/**
- * Проверка доступности зачарования
- */
-export function canAffordEnchantment(
-  cost: { soulEssence: number; gold: number },
-  playerSoulEssence: number,
-  playerGold: number,
-  playerLevel: number,
-  requiredLevel: number,
-  playerFame: number,
-  requiredFame: number
-): boolean {
-  if (playerSoulEssence < cost.soulEssence) return false
-  if (playerGold < cost.gold) return false
-  if (playerLevel < requiredLevel) return false
-  if (playerFame < requiredFame) return false
-  return true
-}
+// Реэкспортируем утилиты для использования в game-store
+export { calculateSacrificeValue, canAffordEnchantmentUtil as canAffordEnchantment }
 
 // ================================
 // SLICE
