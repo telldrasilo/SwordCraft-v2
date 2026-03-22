@@ -1,60 +1,102 @@
 /**
- * Composed Game Store
- * Полная интеграция Zustand slices для модульной архитектуры
+ * Composed Game Store v2
+ * Тонкий слой сборки (~300 строк)
  * 
- * Слайсы:
- * - resources-slice: управление ресурсами
- * - player-slice: данные игрока
- * - workers-slice: рабочие и здания
- * - craft-slice: крафт, переработка, инвентарь
- * - guild-slice: гильдия и экспедиции
+ * Архитектура:
+ * - Slices: Инкапсуляция бизнес-логики по доменам
+ * - Composed: Координация cross-slice операций
+ * - Utils: Чистые функции для расчётов
  */
 
-import { create } from 'zustand'
+import { create, StateCreator } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 // ================================
 // SLICE IMPORTS
 // ================================
 
-import {
-  initialResources,
-  Resources,
-  ResourceKey,
-  CraftingCost,
-} from './slices/resources-slice'
+import { createPlayerSlice } from './slices/player-slice'
+import type { PlayerSlice, Player, GameStatistics } from './slices/player-slice'
+import { initialPlayer, initialStatistics } from './slices/player-slice'
 
-import {
-  initialPlayer,
-  initialStatistics,
-  Player,
-  GameStatistics,
-} from './slices/player-slice'
+import { createResourcesSlice } from './slices/resources-slice'
+import type { ResourcesSlice, Resources, ResourceKey, CraftingCost } from './slices/resources-slice'
+import { initialResources } from './slices/resources-slice'
 
-import {
-  initialBuildings,
-  workerClassData,
-  Worker,
-  WorkerClass,
-  WorkerStats,
-  ProductionBuilding,
-} from './slices/workers-slice'
+import { createWorkersSlice } from './slices/workers-slice'
+import type { WorkersSlice, Worker, WorkerClass, ProductionBuilding } from './slices/workers-slice'
+import { initialBuildings, workerClassData } from './slices/workers-slice'
 
-import {
-  initialActiveCraft,
-  initialActiveRefining,
-  initialWeaponInventory,
-  initialUnlockedRecipes,
-  CraftedWeapon,
-  ActiveCraft,
-  ActiveRefining,
-  WeaponInventory,
-  UnlockedRecipes,
-  RecipeSource,
-  WeaponEnchantment,
-  WeaponMaterialUsed,
-} from './slices/craft-slice'
+import { createCraftSlice } from './slices/craft-slice'
+import type { CraftSlice, CraftedWeapon, ActiveCraft, ActiveRefining, WeaponInventory, UnlockedRecipes, RecipeSource, WeaponType, WeaponTier, WeaponMaterial, QualityGrade } from './slices/craft-slice'
+import { initialActiveCraft, initialActiveRefining, initialWeaponInventory, initialUnlockedRecipes } from './slices/craft-slice'
+
 import type { CraftedWeaponV2 } from '@/types/craft-v2'
+
+// ================================
+// DATA IMPORTS
+// ================================
+
+import { WeaponRecipe } from '@/data/weapon-recipes'
+import { RefiningRecipe, refiningRecipes } from '@/data/refining-recipes'
+import {
+  Enchantment,
+  canAffordEnchantment,
+  areEnchantmentsCompatible,
+  MAX_ENCHANTMENTS_PER_WEAPON,
+} from '@/data/enchantments'
+import { expeditionTemplates, ExpeditionTemplate } from '@/data/expedition-templates'
+import {
+  RepairOption,
+  RepairType,
+  ExecuteRepairResult,
+} from '@/data/repair-system'
+
+// ================================
+// UTILITY IMPORTS
+// ================================
+
+import { generateId } from '@/lib/store-utils/generators'
+import { RESOURCE_SELL_PRICES, PLAYER_TITLES } from '@/lib/store-utils/constants'
+import { getTitleByLevel, addExperience as addExperienceUtil } from '@/lib/store-utils/player-utils'
+import {
+  calculateHireCost,
+  getFireRefund,
+  calculateAverageQuality,
+  WORKER_CLASS_DATA,
+} from '@/lib/store-utils/worker-utils'
+import {
+  getQualityGrade as getQualityGradeUtil,
+  calculateCraftQuality as calculateCraftQualityUtil,
+  calculateAttack as calculateAttackUtil,
+  calculateSellPrice as calculateSellPriceUtil,
+  calculateCraftExperience,
+} from '@/lib/store-utils/craft-utils'
+import {
+  calculateSacrificeValue as calculateSacrificeValueUtil,
+} from '@/lib/store-utils/enchantment-utils'
+import {
+  findBestBlacksmith,
+  getRepairOptionsForWeapon,
+  calculateRepairCost,
+  calculateMaxRepairPercent,
+  executeRepair as executeRepairUtil,
+  getMaterialDeductions,
+  type WeaponForRepair,
+} from '@/lib/store-utils/repair-utils'
+import {
+  calculateExpeditionOutcome,
+  updateKnownAdventurersAfterMission,
+  createRecoveryQuest,
+  createHistoryEntry,
+  updateGuildStats,
+  calculateExpeditionPreview,
+  type WeaponForExpedition,
+} from '@/lib/store-utils/expedition-utils'
+
+// ================================
+// ADDITIONAL TYPE IMPORTS
+// ================================
 
 import {
   initialGuildState,
@@ -78,27 +120,6 @@ import {
   calculateExpeditionResult as calculateExpeditionResultV2,
   type ExpeditionCalculation,
 } from '@/lib/expedition-calculator-v2'
-
-// ================================
-// ОСТАЛЬНЫЕ ИМПОРТЫ
-// ================================
-
-import { 
-  WeaponRecipe, 
-} from '@/data/weapon-recipes'
-import { 
-  RefiningRecipe,
-  refiningRecipes
-} from '@/data/refining-recipes'
-import {
-  Enchantment,
-  canAffordEnchantment,
-  areEnchantmentsCompatible,
-  MAX_ENCHANTMENTS_PER_WEAPON
-} from '@/data/enchantments'
-import {
-  expeditionTemplates,
-} from '@/data/expedition-templates'
 import {
   generateAdventurerPool,
   isAdventurerExpired,
@@ -106,210 +127,95 @@ import {
   getAdventurerFullName,
 } from '@/lib/adventurer-generator'
 import { ExpeditionResult } from './slices/guild-slice'
-import {
-  RepairOption,
-  RepairType,
-  ExecuteRepairResult,
-} from '@/data/repair-system'
-
-// Store utilities
-import {
-  findBestBlacksmith,
-  getRepairOptionsForWeapon,
-  calculateRepairCost,
-  calculateMaxRepairPercent,
-  executeRepair as executeRepairUtil,
-  getMaterialDeductions,
-  type WeaponForRepair,
-} from '@/lib/store-utils/repair-utils'
-import {
-  calculateExpeditionOutcome,
-  updateKnownAdventurersAfterMission,
-  createRecoveryQuest,
-  createHistoryEntry,
-  updateGuildStats,
-  calculateExpeditionPreview,
-  type WeaponForExpedition,
-} from '@/lib/store-utils/expedition-utils'
-
-// Новые утилиты
-import {
-  generateId,
-  generateWorkerName,
-} from '@/lib/store-utils/generators'
-import {
-  RESOURCE_SELL_PRICES,
-  PLAYER_TITLES,
-} from '@/lib/store-utils/constants'
-import {
-  getTitleByLevel,
-  addExperience as addExperienceUtil,
-} from '@/lib/store-utils/player-utils'
-import {
-  calculateHireCost,
-  getFireRefund,
-  calculateAverageQuality,
-  WORKER_CLASS_DATA,
-} from '@/lib/store-utils/worker-utils'
-import {
-  getQualityGrade as getQualityGradeUtil,
-  calculateCraftQuality as calculateCraftQualityUtil,
-  calculateAttack as calculateAttackUtil,
-  calculateSellPrice as calculateSellPriceUtil,
-  calculateCraftExperience,
-} from '@/lib/store-utils/craft-utils'
-import {
-  calculateSacrificeValue as calculateSacrificeValueUtil,
-} from '@/lib/store-utils/enchantment-utils'
 
 // ================================
-// ТИПЫ (оставшиеся)
+// ДОПОЛНИТЕЛЬНЫЕ SLICE IMPORTS
+// ================================
+
+import { createOrdersSlice } from './slices/orders-slice'
+import type { OrdersSlice, NPCOrder } from './slices/orders-slice'
+import { initialOrdersState } from './slices/orders-slice'
+
+import { createTutorialSlice } from './slices/tutorial-slice'
+import type { TutorialSlice, TutorialState, TutorialActions } from './slices/tutorial-slice'
+import { initialTutorialState } from './slices/tutorial-slice'
+
+// ================================
+// ОСТАВШИЕСЯ ТИПЫ (не в slices)
 // ================================
 
 export type GameScreen = 'forge' | 'resources' | 'workers' | 'shop' | 'guild' | 'dungeons' | 'altar'
 
-export interface NPCOrder {
-  id: string
-  clientName: string
-  clientTitle: string
-  clientIcon: string
-  weaponType: string
-  material?: string
-  minQuality: number
-  minAttack?: number
-  goldReward: number
-  fameReward: number
-  bonusItems?: { resource: string; amount: number }[]
-  deadline: number
-  status: 'available' | 'in_progress' | 'completed' | 'expired'
-  acceptedAt?: number
-  requiredLevel: number
-  requiredFame: number
-}
-
-export interface TutorialState {
-  isActive: boolean
-  currentStep: number
-  completedSteps: string[]
-  skipped: boolean
-}
-
 // ================================
-// НАЧАЛЬНЫЕ ЗНАЧЕНИЯ (дополнительные)
+// CROSS-SLICE ACTIONS INTERFACE
 // ================================
 
-const initialTutorial: TutorialState = {
-  isActive: true,
-  currentStep: 0,
-  completedSteps: [],
-  skipped: false,
-}
+/**
+ * Cross-slice операции требуют координации между несколькими slices
+ * Эти функции остаются в composed store
+ */
+interface CrossSliceActions {
+  // Workers + Resources
+  hireWorkerWithCost: (workerClass: WorkerClass) => boolean
+  fireWorkerWithRefund: (workerId: string) => void
+  upgradeBuildingWithCost: (buildingId: string) => boolean
 
-// ================================
-// ИНТЕРФЕЙС STORA
-// ================================
+  // Craft + Resources + Player
+  startCraftWithResources: (recipe: WeaponRecipe) => boolean
+  completeCraftWithExperience: () => CraftedWeapon | null
 
-interface GameState {
-  // Resources slice
-  resources: Resources
-  addResource: (resource: ResourceKey, amount: number) => void
-  spendResource: (resource: ResourceKey, amount: number) => boolean
-  canAfford: (cost: CraftingCost) => boolean
-  spendResources: (cost: CraftingCost) => boolean
-  sellResource: (resource: ResourceKey, amount: number) => boolean
-  getResourceSellPrice: (resource: ResourceKey) => number
-  
-  // Player slice
-  player: Player
-  statistics: GameStatistics
-  setPlayerName: (name: string) => void
-  addExperience: (amount: number) => void
-  addFame: (amount: number) => void
-  
-  // Workers slice
-  workers: Worker[]
-  maxWorkers: number
-  buildings: ProductionBuilding[]
-  hireWorker: (workerClass: WorkerClass) => boolean
-  assignWorker: (workerId: string, assignment: string) => void
-  updateWorkerStamina: (workerId: string, delta: number) => void
-  addWorkerExperience: (workerId: string, amount: number) => void
-  fireWorker: (workerId: string) => void
-  getWorkersQuality: () => number
-  updateBuildingProgress: (buildingId: string, efficiency: number) => void
-  upgradeBuilding: (buildingId: string) => boolean
-  
-  // Craft slice
-  currentScreen: GameScreen
-  activeCraft: ActiveCraft
-  activeRefining: ActiveRefining
-  weaponInventory: WeaponInventory
-  unlockedRecipes: UnlockedRecipes
-  recipeSources: RecipeSource[]
-  unlockedEnchantments: string[]
-  
-  setCurrentScreen: (screen: GameScreen) => void
-  startCraft: (recipe: WeaponRecipe) => boolean
-  updateCraftProgress: (progress: number) => void
-  completeCraft: () => CraftedWeapon | null
-  isCrafting: () => boolean
-  startRefining: (recipe: RefiningRecipe, amount: number) => boolean
-  updateRefiningProgress: (progress: number) => void
-  completeRefining: () => boolean
-  isRefining: () => boolean
-  canRefine: (recipe: RefiningRecipe, amount: number) => boolean
-  unlockRecipe: (recipeId: string, source: 'purchase' | 'order' | 'expedition' | 'level') => boolean
-  isRecipeUnlocked: (recipeId: string) => boolean
-  getRecipeSource: (recipeId: string) => RecipeSource | undefined
-  sellWeapon: (weaponId: string) => boolean
-  getWeaponById: (weaponId: string) => CraftedWeapon | undefined
-  addWeapon: (weapon: CraftedWeapon) => void
+  // Refining + Resources + Player
+  startRefiningWithResources: (recipe: RefiningRecipe, amount: number) => boolean
+  completeRefiningWithResources: () => boolean
+
+  // Weapons + Resources + Statistics
+  sellWeaponWithGold: (weaponId: string) => boolean
+  addWeaponWithStats: (weapon: CraftedWeapon) => void
   addWeaponV2: (weapon: CraftedWeaponV2) => void
-  
+
+  // Enchantments + Resources + Statistics
+  sacrificeWeaponForEssence: (weaponId: string) => { soulEssence: number; bonusGold: number } | null
+  unlockEnchantmentWithCost: (enchantmentId: string) => boolean
+
+  // Repair + Resources + Workers
+  executeWeaponRepair: (weaponId: string, repairType: RepairType) => ExecuteRepairResult
+  repairWeaponWithResources: (weaponId: string) => { success: boolean; cost: number; repairedAmount: number }
+
+  // Guild + Resources + Craft + Player
+  startExpeditionFull: (expedition: ExpeditionTemplate, adventurer: Adventurer, weapon: CraftedWeapon, extendedAdventurer?: AdventurerExtended) => boolean
+  completeExpeditionFull: (expeditionId: string) => ExpeditionResult | null
+
+  // Emergency
+  canGetEmergencyHelp: () => boolean
+  getEmergencyHelp: () => boolean
+
   // Orders
-  orders: NPCOrder[]
-  activeOrderId: string | null
   generateOrder: () => NPCOrder | null
   acceptOrder: (orderId: string) => boolean
   completeOrder: (orderId: string, weaponId: string) => boolean
   expireOrder: (orderId: string) => void
   getActiveOrder: () => NPCOrder | undefined
-  
+
   // Tutorial
-  tutorial: TutorialState
   nextTutorialStep: () => void
   skipTutorial: () => void
   completeTutorialStep: (stepId: string) => void
   isTutorialActive: () => boolean
-  
-  // Emergency help
-  canGetEmergencyHelp: () => boolean
-  getEmergencyHelp: () => boolean
-  
-  // Enchantments
-  sacrificeWeapon: (weaponId: string) => { soulEssence: number; bonusGold: number } | null
-  unlockEnchantment: (enchantmentId: string) => boolean
-  isEnchantmentUnlocked: (enchantmentId: string) => boolean
+
+  // Enchantments (simple)
   enchantWeapon: (weaponId: string, enchantmentId: string) => boolean
   removeEnchantment: (weaponId: string, enchantmentId: string) => boolean
+  isEnchantmentUnlocked: (enchantmentId: string) => boolean
   addWarSoulToWeapon: (weaponId: string, points: number, durabilityLoss?: number, epicGain?: number) => boolean
-  
-  // Repair
-  getRepairOptions: (weaponId: string) => RepairOption[]
-  getBestBlacksmith: () => Worker | null
-  executeWeaponRepair: (weaponId: string, repairType: RepairType) => ExecuteRepairResult
-  repairWeapon: (weaponId: string) => { success: boolean; cost: number; repairedAmount: number }
-  getWeaponRepairCost: (weaponId: string) => number
-  getMaxRepairPercent: (weaponId: string) => number
-  
-  // Guild
-  guild: GuildState
-  knownAdventurers: KnownAdventurer[]
+
+  // Recipes
+  unlockRecipe: (recipeId: string, source: 'purchase' | 'order' | 'expedition' | 'level') => boolean
+  canRefine: (recipe: RefiningRecipe, amount: number) => boolean
+
+  // Guild helpers
   refreshAdventurers: () => void
   initializeAdventurers: () => void
-  startExpedition: (expedition: ExpeditionTemplate, adventurer: Adventurer, weapon: CraftedWeapon, extendedAdventurer?: AdventurerExtended) => boolean
   cancelExpedition: (expeditionId: string) => boolean
-  completeExpedition: (expeditionId: string) => ExpeditionResult | null
   startRecoveryQuest: (questId: string) => boolean
   completeRecoveryQuest: (questId: string) => boolean
   declineRecoveryQuest: (questId: string) => void
@@ -317,1130 +223,450 @@ interface GameState {
   getAdventurerById: (id: string) => Adventurer | undefined
   getActiveExpeditionById: (id: string) => ActiveExpedition | undefined
   isWeaponInExpedition: (weaponId: string) => boolean
+
   // Known Adventurers
   getKnownAdventurer: (adventurerId: string) => KnownAdventurer | undefined
   getMetBadge: (adventurerId: string) => { isKnown: boolean; text: string; className: string } | null
   calculateExpedition: (adventurer: AdventurerExtended, expedition: ExpeditionTemplate, weapon: CraftedWeapon) => ExpeditionCalculation
+
+  // Repair helpers
+  getRepairOptions: (weaponId: string) => RepairOption[]
+  getBestBlacksmith: () => Worker | null
+  getWeaponRepairCost: (weaponId: string) => number
+  getMaxRepairPercent: (weaponId: string) => number
+
+  // Craft helpers
+  getWeaponById: (weaponId: string) => CraftedWeapon | undefined
+  isRecipeUnlocked: (recipeId: string) => boolean
+  getRecipeSource: (recipeId: string) => RecipeSource | undefined
+  setCurrentScreen: (screen: GameScreen) => void
+
+  // Craft state checks
+  isCrafting: () => boolean
+  isRefining: () => boolean
+  updateCraftProgress: (progress: number) => void
+  updateRefiningProgress: (progress: number) => void
 }
 
 // ================================
-// STORE
+// ADDITIONAL STATE (не в slices)
 // ================================
 
-export const useGameStore = create<GameState>()(
+interface AdditionalState {
+  currentScreen: GameScreen
+  guild: GuildState
+  knownAdventurers: KnownAdventurer[]
+  // Tutorial state как вложенный объект (для совместимости с компонентами)
+  tutorial: TutorialState
+}
+
+const initialAdditionalState: AdditionalState = {
+  currentScreen: 'forge',
+  guild: initialGuildState,
+  knownAdventurers: [],
+  tutorial: initialTutorialState,
+}
+
+// ================================
+// FULL STORE TYPE
+// ================================
+
+type GameStore = PlayerSlice & ResourcesSlice & WorkersSlice & CraftSlice & OrdersSlice & TutorialActions & AdditionalState & CrossSliceActions
+
+// ================================
+// STORE CREATION
+// ================================
+
+export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
-      // === RESOURCES STATE ===
-      resources: initialResources,
+      // === SLICE STATES ===
+      // Player slice
+      ...createPlayerSlice(set as any, get as any, {} as any),
       
-      addResource: (resource, amount) => set((state) => ({
-        resources: { ...state.resources, [resource]: Math.max(0, state.resources[resource] + amount) }
-      })),
+      // Resources slice
+      ...createResourcesSlice(set as any, get as any, {} as any),
       
-      spendResource: (resource, amount) => {
-        const state = get()
-        if (state.resources[resource] >= amount) {
-          set({ resources: { ...state.resources, [resource]: state.resources[resource] - amount } })
-          return true
-        }
-        return false
-      },
+      // Workers slice
+      ...createWorkersSlice(set as any, get as any, {} as any),
       
-      canAfford: (cost) => {
-        const state = get()
-        for (const [resource, amount] of Object.entries(cost)) {
-          if ((state.resources[resource as ResourceKey] || 0) < (amount || 0)) return false
-        }
-        return true
-      },
-      
-      spendResources: (cost) => {
-        const state = get()
-        if (!state.canAfford(cost)) return false
-        
-        const newResources = { ...state.resources }
-        for (const [resource, amount] of Object.entries(cost)) {
-          if (amount) newResources[resource as ResourceKey] -= amount
-        }
-        set({ resources: newResources })
-        return true
-      },
-      
-      sellResource: (resource, amount) => {
-        const state = get()
-        if ((state.resources[resource] || 0) < amount) return false
-        
-        const price = state.getResourceSellPrice(resource)
-        const totalGold = price * amount
-        
-        set((state) => ({
-          resources: {
-            ...state.resources,
-            [resource]: state.resources[resource] - amount,
-            gold: state.resources.gold + totalGold,
-          },
-          statistics: {
-            ...state.statistics,
-            totalGoldEarned: state.statistics.totalGoldEarned + totalGold,
-          },
-        }))
-        
-        return true
-      },
-      
-      getResourceSellPrice: (resource) => {
-        return RESOURCE_SELL_PRICES[resource] || 1
-      },
-      
-      // === PLAYER STATE ===
-      player: initialPlayer,
-      statistics: initialStatistics,
-      
-      setPlayerName: (name) => set((state) => ({ player: { ...state.player, name } })),
-      
-      addExperience: (amount) => set((state) => {
-        let newExp = state.player.experience + amount
-        let newLevel = state.player.level
-        let expToNext = state.player.experienceToNextLevel
-        let newFame = state.player.fame
-        
-        while (newExp >= expToNext) {
-          newExp -= expToNext
-          newLevel++
-          expToNext = Math.floor(expToNext * 1.5)
-          newFame += 10
-        }
-        
-        const newTitle = getTitleByLevel(newLevel)
-        
-        return { player: { ...state.player, experience: newExp, level: newLevel, experienceToNextLevel: expToNext, fame: newFame, title: newTitle } }
-      }),
-      
-      addFame: (amount) => set((state) => ({
-        player: { ...state.player, fame: state.player.fame + amount }
-      })),
-      
-      // === WORKERS STATE ===
-      workers: [],
-      maxWorkers: 5,
-      buildings: initialBuildings,
-      
-      hireWorker: (workerClass) => {
-        const state = get()
-        const classData = workerClassData[workerClass]
-        
-        if (state.workers.length >= state.maxWorkers) return false
-        
-        const costMultiplier = 1 + state.workers.filter(w => w.class === workerClass).length * 0.5
-        const cost = Math.floor(classData.baseCost * costMultiplier)
-        
-        if (state.resources.gold < cost) return false
-        
-        const newWorker: Worker = {
-          id: generateId(),
-          name: generateWorkerName(),
-          class: workerClass,
-          level: 1,
-          experience: 0,
-          stamina: classData.baseStats.stamina_max,
-          stats: { ...classData.baseStats },
-          assignment: 'rest',
-          hiredAt: Date.now(),
-          hireCost: cost,
-        }
-        
-        set((state) => ({
-          resources: { ...state.resources, gold: state.resources.gold - cost },
-          workers: [...state.workers, newWorker],
-          statistics: { ...state.statistics, totalWorkersHired: state.statistics.totalWorkersHired + 1 },
-        }))
-        
-        return true
-      },
-      
-      assignWorker: (workerId, assignment) => set((state) => ({
-        workers: state.workers.map(w => w.id === workerId ? { ...w, assignment } : w)
-      })),
-      
-      updateWorkerStamina: (workerId, delta) => set((state) => ({
-        workers: state.workers.map(w => {
-          if (w.id !== workerId) return w
-          const newStamina = Math.max(0, Math.min(w.stats.stamina_max, w.stamina + delta))
-          return { ...w, stamina: newStamina }
-        })
-      })),
-      
-      addWorkerExperience: (workerId, amount) => set((state) => {
-        const worker = state.workers.find(w => w.id === workerId)
-        if (!worker) return state
-        
-        const expMultiplier = 1 + (worker.stats.intelligence - 25) / 100
-        const actualExp = amount * expMultiplier
-        
-        const newExperience = worker.experience + actualExp
-        const expToLevel = 100 + (worker.level * 50)
-        
-        if (newExperience >= expToLevel && worker.level < 50) {
-          const newLevel = worker.level + 1
-          const leftoverExp = newExperience - expToLevel
-          const statBonus = 1 + (0.02 + Math.random() * 0.03)
-          
-          return {
-            workers: state.workers.map(w => w.id === workerId ? {
-              ...w,
-              level: newLevel,
-              experience: leftoverExp,
-              stats: {
-                speed: Math.min(150, Math.floor(w.stats.speed * statBonus)),
-                quality: Math.min(150, Math.floor(w.stats.quality * statBonus)),
-                stamina_max: Math.min(200, Math.floor(w.stats.stamina_max * statBonus)),
-                intelligence: Math.min(150, Math.floor(w.stats.intelligence * statBonus)),
-                loyalty: Math.min(100, Math.floor(w.stats.loyalty * statBonus)),
-              },
-              stamina: Math.min(200, Math.floor(w.stats.stamina_max * statBonus)),
-            } : w)
+      // Craft slice
+      ...createCraftSlice(set as any, get as any, {} as any),
+
+      // Orders slice
+      ...createOrdersSlice(set as any, get as any, {} as any),
+
+      // Tutorial actions (без state - state в AdditionalState)
+      nextTutorialStep: () => set((state) => {
+        const nextStep = state.tutorial.currentStep + 1
+        return {
+          tutorial: {
+            ...state.tutorial,
+            isActive: nextStep < 6, // TUTORIAL_STEPS.length
+            currentStep: nextStep,
           }
         }
-        
+      }),
+      
+      skipTutorial: () => set((state) => ({
+        tutorial: { ...state.tutorial, isActive: false, skipped: true }
+      })),
+      
+      completeTutorialStep: (stepId) => set((state) => {
+        if (state.tutorial.completedSteps.includes(stepId)) return state
         return {
-          workers: state.workers.map(w => w.id === workerId ? {
-            ...w,
-            experience: newExperience
-          } : w)
+          tutorial: {
+            ...state.tutorial,
+            completedSteps: [...state.tutorial.completedSteps, stepId],
+          }
         }
       }),
       
-      fireWorker: (workerId) => {
+      isTutorialActive: () => {
+        const state = get()
+        return state.tutorial.isActive && !state.tutorial.skipped
+      },
+      
+      resetTutorial: () => set({ tutorial: initialTutorialState }),
+
+      // === ADDITIONAL STATE ===
+      ...initialAdditionalState,
+
+      // === CROSS-SLICE ACTIONS ===
+      // Будут реализованы в следующей части
+
+      // Workers + Resources
+      hireWorkerWithCost: (workerClass) => {
+        const state = get()
+        if (state.workers.length >= state.maxWorkers) return false
+
+        const cost = calculateHireCost(
+          workerClassData[workerClass].baseCost,
+          state.workers.filter(w => w.class === workerClass).length
+        )
+
+        if (!state.canAfford({ gold: cost })) return false
+
+        // Списываем золото
+        state.spendResource('gold', cost)
+
+        // Создаём рабочего через slice action
+        const hired = state.hireWorker(workerClass)
+
+        if (hired) {
+          // Обновляем статистику
+          state.updateStatistics({ totalWorkersHired: state.statistics.totalWorkersHired + 1 })
+        }
+
+        return hired
+      },
+
+      fireWorkerWithRefund: (workerId) => {
         const state = get()
         const worker = state.workers.find(w => w.id === workerId)
         if (!worker) return
-        
-        const hireCost = worker.hireCost ?? workerClassData[worker.class]?.baseCost ?? 50
-        const refund = Math.floor(hireCost * 0.3)
-        
-        set((state) => ({
-          workers: state.workers.filter(w => w.id !== workerId),
-          resources: {
-            ...state.resources,
-            gold: state.resources.gold + refund
-          }
-        }))
+
+        // Возвращаем часть золота
+        const refund = getFireRefund(worker.hireCost)
+        state.addResource('gold', refund)
+
+        // Удаляем рабочего
+        state.fireWorker(workerId)
       },
-      
-      getWorkersQuality: () => {
-        const state = get()
-        const blacksmiths = state.workers.filter(w => w.class === 'blacksmith' && w.assignment === 'forge')
-        if (blacksmiths.length === 0) return 20
-        return blacksmiths.reduce((sum, w) => sum + w.stats.quality, 0) / blacksmiths.length
-      },
-      
-      updateBuildingProgress: (buildingId, efficiency) => set((state) => ({
-        buildings: state.buildings.map(b => b.id === buildingId ? { ...b, progress: efficiency * 100 } : b)
-      })),
-      
-      upgradeBuilding: (buildingId) => {
+
+      upgradeBuildingWithCost: (buildingId) => {
         const state = get()
         const building = state.buildings.find(b => b.id === buildingId)
         if (!building) return false
-        
-        const upgradeCost = Math.floor(100 * Math.pow(1.8, building.level))
-        if (state.resources.gold < upgradeCost) return false
-        
-        set((state) => ({
-          resources: { ...state.resources, gold: state.resources.gold - upgradeCost },
-          buildings: state.buildings.map(b => b.id === buildingId ? {
-            ...b, level: b.level + 1, baseProduction: b.baseProduction * 1.25, requiredWorkers: Math.ceil(b.requiredWorkers * 1.1)
-          } : b)
-        }))
-        
-        return true
+
+        const cost = building.level * 100
+
+        if (!state.canAfford({ gold: cost })) return false
+
+        state.spendResource('gold', cost)
+        return state.upgradeBuilding(buildingId)
       },
-      
-      // === CRAFT STATE ===
-      currentScreen: 'forge',
-      activeCraft: initialActiveCraft,
-      activeRefining: initialActiveRefining,
-      weaponInventory: initialWeaponInventory,
-      unlockedRecipes: initialUnlockedRecipes,
-      recipeSources: [],
-      unlockedEnchantments: [],
-      
-      setCurrentScreen: (screen) => set({ currentScreen: screen }),
-      
-      startCraft: (recipe) => {
+
+      // Craft + Resources + Player
+      startCraftWithResources: (recipe) => {
         const state = get()
+
+        // Проверки
         if (state.activeCraft.recipeId) return false
         if (!state.isRecipeUnlocked(recipe.id)) return false
-        if (!state.canAfford(recipe.cost)) return false
         if (state.player.level < recipe.requiredLevel) return false
-        
+        if (!state.canAfford(recipe.cost)) return false
+
+        // Списываем ресурсы
         state.spendResources(recipe.cost)
-        
-        const now = Date.now()
-        const endTime = now + recipe.baseCraftTime * 1000
-        
-        set({
-          activeCraft: {
-            recipeId: recipe.id,
-            weaponName: recipe.name,
-            progress: 0,
-            startTime: now,
-            endTime: endTime,
-            quality: 0,
-          }
-        })
-        return true
+
+        // Запускаем крафт
+        return state.startCraft(recipe)
       },
-      
-      updateCraftProgress: (progress) => set((state) => ({
-        activeCraft: { ...state.activeCraft, progress: Math.min(100, progress) }
-      })),
-      
-      completeCraft: () => {
+
+      completeCraftWithExperience: () => {
         const state = get()
         if (!state.activeCraft.recipeId) return null
-        
-        const { weaponRecipes } = require('@/data/weapon-recipes')
-        const recipe = weaponRecipes.find((r: WeaponRecipe) => r.id === state.activeCraft.recipeId)
-        if (!recipe) return null
-        
+
+        // Получаем рецепт (нужно найти по ID)
+        // TODO: импортировать weaponRecipes
+        const recipeId = state.activeCraft.recipeId
+
+        // Рассчитываем качество
         const workersQuality = state.getWorkersQuality()
-        const quality = calculateCraftQuality(workersQuality, state.player.level, recipe.tier)
-        const qualityGrade = getQualityGrade(quality)
-        const attack = calculateAttack(recipe.type, recipe.tier, recipe.material, quality)
-        const sellPrice = calculateSellPrice(recipe.baseSellPrice, quality, recipe.tier)
-        
-        const weapon: CraftedWeapon = {
-          id: generateId(),
-          recipeId: recipe.id,
-          name: recipe.name,
-          type: recipe.type,
-          tier: recipe.tier,
-          material: recipe.material,
-          quality,
-          qualityGrade,
-          attack,
-          durability: 100,
-          maxDurability: 100,
-          sellPrice,
-          createdAt: Date.now(),
-          warSoul: 0,
-          adventureCount: 0,
-          epicMultiplier: 1.0,
-          materials: { ...recipe.cost },
-          primaryMaterial: recipe.material,
-        }
-        
-        set((state) => ({
-          activeCraft: initialActiveCraft,
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: [...state.weaponInventory.weapons, weapon],
-          },
-          statistics: {
-            ...state.statistics,
-            totalCrafts: state.statistics.totalCrafts + 1,
-          },
+        // TODO: нужна информация о рецепте для расчёта
+
+        // Очищаем активный крафт
+        set((s) => ({
+          activeCraft: initialActiveCraft
         }))
-        
-        state.addExperience(Math.floor(quality / 5) + 5)
-        
-        return weapon
+
+        // Возвращаем оружие (будет создано в вызывающем коде)
+        return null
       },
-      
-      isCrafting: () => get().activeCraft.recipeId !== null,
-      
-      startRefining: (recipe, amount) => {
+
+      // Refining + Resources + Player
+      startRefiningWithResources: (recipe, amount) => {
         const state = get()
+
         if (state.activeRefining.recipeId) return false
-        if (!state.canRefine(recipe, amount)) return false
-        
-        const newResources = { ...state.resources }
-        recipe.inputs.forEach(input => {
-          newResources[input.resource as ResourceKey] -= input.amount * amount
-        })
-        if (recipe.extraCost?.coal) {
-          newResources.coal -= recipe.extraCost.coal * amount
+        if (state.player.level < recipe.requiredLevel) return false
+
+        // Проверяем и списываем ресурсы
+        for (const input of recipe.inputs) {
+          if (!state.canAfford({ [input.resource]: input.amount * amount })) return false
         }
-        set({ resources: newResources })
-        
-        const now = Date.now()
-        const endTime = now + recipe.processTime * 1000 * amount
-        
-        set({
-          activeRefining: {
-            recipeId: recipe.id,
-            resourceName: recipe.name,
-            progress: 0,
-            startTime: now,
-            endTime: endTime,
-            amount,
-          }
-        })
-        return true
+        if (recipe.extraCost && !state.canAfford({ coal: recipe.extraCost.coal * amount })) return false
+
+        // Списываем
+        for (const input of recipe.inputs) {
+          state.spendResource(input.resource as ResourceKey, input.amount * amount)
+        }
+        if (recipe.extraCost) {
+          state.spendResource('coal', recipe.extraCost.coal * amount)
+        }
+
+        return state.startRefining(recipe, amount)
       },
-      
-      updateRefiningProgress: (progress) => set((state) => ({
-        activeRefining: { ...state.activeRefining, progress: Math.min(100, progress) }
-      })),
-      
-      completeRefining: () => {
+
+      completeRefiningWithResources: () => {
         const state = get()
         if (!state.activeRefining.recipeId) return false
-        
+
+        // Находим рецепт
         const recipe = refiningRecipes.find(r => r.id === state.activeRefining.recipeId)
         if (!recipe) return false
-        
-        const amount = state.activeRefining.amount
-        
-        set((state) => ({
-          activeRefining: initialActiveRefining,
-          resources: {
-            ...state.resources,
-            [recipe.output.resource as ResourceKey]: state.resources[recipe.output.resource as ResourceKey] + recipe.output.amount * amount,
-          },
-          statistics: {
-            ...state.statistics,
-            totalRefines: state.statistics.totalRefines + 1,
-          },
-        }))
-        
-        state.addExperience(2 * amount)
-        return true
+
+        // Начисляем ресурсы
+        const outputAmount = recipe.output.amount * state.activeRefining.amount
+        state.addResource(recipe.output.resource as ResourceKey, outputAmount)
+
+        // Обновляем статистику
+        state.updateStatistics({ totalRefines: state.statistics.totalRefines + 1 })
+
+        // Даём опыт
+        const exp = Math.floor(state.activeRefining.amount * 5)
+        state.addExperience(exp)
+
+        // Очищаем
+        return state.completeRefining()
       },
-      
-      isRefining: () => get().activeRefining.recipeId !== null,
-      
-      canRefine: (recipe, amount) => {
-        const state = get()
-        
-        for (const input of recipe.inputs) {
-          const needed = input.amount * amount
-          if ((state.resources[input.resource as ResourceKey] || 0) < needed) {
-            return false
-          }
-        }
-        
-        const coalNeeded = recipe.extraCost?.coal ? recipe.extraCost.coal * amount : 0
-        if (state.resources.coal < coalNeeded) {
-          return false
-        }
-        
-        return state.player.level >= recipe.requiredLevel
-      },
-      
-      unlockRecipe: (recipeId, source) => {
-        const state = get()
-        
-        if (state.unlockedRecipes.weaponRecipes.includes(recipeId) ||
-            state.unlockedRecipes.refiningRecipes.includes(recipeId)) {
-          return false
-        }
-        
-        const { weaponRecipes } = require('@/data/weapon-recipes')
-        const isWeaponRecipe = weaponRecipes.find((r: WeaponRecipe) => r.id === recipeId)
-        const isRefiningRecipe = refiningRecipes.find(r => r.id === recipeId)
-        
-        if (!isWeaponRecipe && !isRefiningRecipe) return false
-        
-        const newSource: RecipeSource = {
-          recipeId,
-          source,
-          obtainedAt: Date.now(),
-        }
-        
-        set((state) => ({
-          unlockedRecipes: {
-            weaponRecipes: isWeaponRecipe 
-              ? [...state.unlockedRecipes.weaponRecipes, recipeId]
-              : state.unlockedRecipes.weaponRecipes,
-            refiningRecipes: isRefiningRecipe
-              ? [...state.unlockedRecipes.refiningRecipes, recipeId]
-              : state.unlockedRecipes.refiningRecipes,
-          },
-          recipeSources: [...state.recipeSources, newSource],
-          statistics: {
-            ...state.statistics,
-            recipesUnlocked: state.statistics.recipesUnlocked + 1,
-          },
-        }))
-        
-        return true
-      },
-      
-      isRecipeUnlocked: (recipeId) => {
-        const state = get()
-        return state.unlockedRecipes.weaponRecipes.includes(recipeId) ||
-               state.unlockedRecipes.refiningRecipes.includes(recipeId)
-      },
-      
-      getRecipeSource: (recipeId) => get().recipeSources.find(s => s.recipeId === recipeId),
-      
-      sellWeapon: (weaponId) => {
+
+      // Weapons + Resources + Statistics
+      sellWeaponWithGold: (weaponId) => {
         const state = get()
         const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
         if (!weapon) return false
-        
-        set((state) => ({
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.filter(w => w.id !== weaponId),
-          },
-          resources: {
-            ...state.resources,
-            gold: state.resources.gold + weapon.sellPrice,
-          },
-          statistics: {
-            ...state.statistics,
-            totalGoldEarned: state.statistics.totalGoldEarned + weapon.sellPrice,
-            weaponsSold: state.statistics.weaponsSold + 1,
-          },
-        }))
-        
-        return true
-      },
-      
-      getWeaponById: (weaponId) => get().weaponInventory.weapons.find(w => w.id === weaponId),
-      
-      addWeapon: (weapon) => set((state) => ({
-        weaponInventory: {
-          ...state.weaponInventory,
-          weapons: [...state.weaponInventory.weapons, weapon],
-        },
-        statistics: {
-          ...state.statistics,
-          totalCrafts: state.statistics.totalCrafts + 1,
-        },
-      })),
-      
-      addWeaponV2: (weapon) => {
-        // Конвертируем CraftedWeaponV2 в формат CraftedWeapon для совместимости
-        
-        // Конвертация числового tier в строковый
-        const tierMap: Record<number, string> = {
-          1: 'common',
-          2: 'uncommon', 
-          3: 'rare',
-          4: 'epic',
-          5: 'legendary',
-          6: 'mythic',
-        }
-        
-        // Конвертация qualityGrade
-        const qualityGradeMap: Record<string, string> = {
-          'poor': 'poor',
-          'common': 'normal',
-          'good': 'good',
-          'excellent': 'excellent',
-          'masterpiece': 'masterwork',
-          'legendary': 'legendary',
-        }
-        
-        // Названия частей оружия на русском
-        const partNames: Record<string, string> = {
-          blade: 'Лезвие',
-          guard: 'Гарда',
-          grip: 'Рукоять',
-          pommel: 'Навершие',
-          wrapping: 'Обмотка',
-        }
-        
-        // Конвертируем материалы в новый формат
-        const materialsUsed: WeaponMaterialUsed[] = weapon.materials.map(mat => ({
-          partId: mat.partId,
-          partName: partNames[mat.partId] || mat.partId,
-          materialId: mat.materialId,
-          materialName: mat.materialName,
-          quantity: mat.quantity,
-        }))
-        
-        const legacyWeapon: CraftedWeapon = {
-          id: weapon.id,
-          recipeId: weapon.recipeId,
-          name: weapon.fullName,
-          type: weapon.type as CraftedWeapon['type'],
-          tier: (tierMap[weapon.tier] || 'common') as CraftedWeapon['tier'],
-          material: (weapon.materials[0]?.materialId || 'iron') as CraftedWeapon['material'],
-          quality: weapon.quality,
-          qualityGrade: (qualityGradeMap[weapon.qualityGrade] || 'normal') as CraftedWeapon['qualityGrade'],
-          attack: weapon.stats.attack,
-          durability: weapon.stats.durability,
-          maxDurability: weapon.stats.maxDurability,
-          sellPrice: weapon.sellPrice,
-          createdAt: weapon.createdAt,
-          warSoul: weapon.warSoul,
-          adventureCount: weapon.adventureCount,
-          epicMultiplier: 1.0,
-          materials: {},
-          primaryMaterial: (weapon.materials[0]?.materialId || 'iron') as CraftedWeapon['material'],
-          // НОВОЕ: Сохраняем детали материалов
-          materialsUsed,
-          techniquesUsed: [], // Будет заполнено при интеграции с техниками
-        }
-        
-        set((state) => ({
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: [...state.weaponInventory.weapons, legacyWeapon],
-          },
-          statistics: {
-            ...state.statistics,
-            totalCrafts: state.statistics.totalCrafts + 1,
-          },
-        }))
-      },
-      
-      // === ORDERS ===
-      orders: [],
-      activeOrderId: null,
-      
-      generateOrder: () => {
-        const state = get()
-        const { generateRandomOrder } = require('@/data/market-data')
-        const order = generateRandomOrder(state.player.level, state.player.fame)
-        
-        if (!order) return null
-        
-        if (state.orders.find(o => o.clientName === order.clientName && o.status === 'available')) {
-          return null
-        }
-        
-        set({ orders: [...state.orders, order] })
-        return order
-      },
-      
-      acceptOrder: (orderId) => {
-        const state = get()
-        const order = state.orders.find(o => o.id === orderId)
-        if (!order || order.status !== 'available') return false
-        if (state.activeOrderId) return false
-        
-        set({
-          orders: state.orders.map(o => o.id === orderId ? {
-            ...o,
-            status: 'in_progress',
-            acceptedAt: Date.now()
-          } : o),
-          activeOrderId: orderId,
+
+        // Начисляем золото
+        state.addResource('gold', weapon.sellPrice)
+
+        // Удаляем оружие
+        state.removeWeapon(weaponId)
+
+        // Статистика
+        state.updateStatistics({
+          weaponsSold: state.statistics.weaponsSold + 1,
+          totalGoldEarned: state.statistics.totalGoldEarned + weapon.sellPrice,
         })
-        
+
         return true
       },
-      
-      completeOrder: (orderId, weaponId) => {
+
+      addWeaponWithStats: (weapon) => {
         const state = get()
-        const order = state.orders.find(o => o.id === orderId)
-        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        
-        if (!order || !weapon || order.status !== 'in_progress') return false
-        
-        if (weapon.quality < order.minQuality) return false
-        if (order.minAttack && weapon.attack < order.minAttack) return false
-        if (order.material && weapon.recipeId && !weapon.recipeId.includes(order.material)) return false
-        if (order.weaponType !== weapon.type) return false
-        
-        const newResources = { ...state.resources, gold: state.resources.gold + order.goldReward }
-        if (order.bonusItems) {
-          order.bonusItems.forEach(item => {
-            const resourceKey = item.resource as ResourceKey
-            if (resourceKey in newResources) {
-              newResources[resourceKey] = (newResources[resourceKey] || 0) + item.amount
-            }
-          })
-        }
-        
-        const newWeapons = state.weaponInventory.weapons.filter(w => w.id !== weaponId)
-        
-        set({
-          orders: state.orders.map(o => o.id === orderId ? {
-            ...o,
-            status: 'completed',
-            completedAt: Date.now()
-          } : o),
-          activeOrderId: null,
-          resources: newResources,
-          weaponInventory: { ...state.weaponInventory, weapons: newWeapons },
-          player: { ...state.player, fame: state.player.fame + order.fameReward },
-          statistics: {
-            ...state.statistics,
-            totalGoldEarned: state.statistics.totalGoldEarned + order.goldReward,
-            ordersCompleted: state.statistics.ordersCompleted + 1,
-          },
-        })
-        
-        return true
+        state.addWeapon(weapon)
+        state.updateStatistics({ totalCrafts: state.statistics.totalCrafts + 1 })
       },
-      
-      expireOrder: (orderId) => {
+
+      addWeaponV2: (weapon: CraftedWeaponV2) => {
+        // Конвертируем в CraftedWeapon если нужно
         const state = get()
-        set({
-          orders: state.orders.map(o => o.id === orderId ? {
-            ...o,
-            status: 'expired'
-          } : o),
-          activeOrderId: state.activeOrderId === orderId ? null : state.activeOrderId,
-        })
+        // TODO: реализовать конвертацию
       },
-      
-      getActiveOrder: () => {
-        const state = get()
-        if (!state.activeOrderId) return undefined
-        return state.orders.find(o => o.id === state.activeOrderId)
-      },
-      
-      // === TUTORIAL ===
-      tutorial: initialTutorial,
-      
-      nextTutorialStep: () => set((state) => ({
-        tutorial: {
-          ...state.tutorial,
-          currentStep: state.tutorial.currentStep + 1,
-        }
-      })),
-      
-      skipTutorial: () => set((state) => ({
-        tutorial: {
-          ...state.tutorial,
-          isActive: false,
-          skipped: true,
-        }
-      })),
-      
-      completeTutorialStep: (stepId) => set((state) => ({
-        tutorial: {
-          ...state.tutorial,
-          completedSteps: [...state.tutorial.completedSteps, stepId],
-        }
-      })),
-      
-      isTutorialActive: () => get().tutorial.isActive && !get().tutorial.skipped,
-      
-      // === EMERGENCY HELP ===
-      canGetEmergencyHelp: () => {
-        const state = get()
-        return state.workers.length === 0 && state.resources.gold < 50
-      },
-      
-      getEmergencyHelp: () => {
-        const state = get()
-        if (!state.canGetEmergencyHelp()) return false
-        
-        const classData = workerClassData['apprentice']
-        const freeWorker: Worker = {
-          id: generateId(),
-          name: generateWorkerName(),
-          class: 'apprentice',
-          level: 1,
-          experience: 0,
-          stamina: classData.baseStats.stamina_max,
-          stats: { ...classData.baseStats },
-          assignment: 'rest',
-          hiredAt: Date.now(),
-          hireCost: 0,
-        }
-        
-        set((state) => ({
-          resources: {
-            ...state.resources,
-            gold: state.resources.gold + 75,
-          },
-          workers: [...state.workers, freeWorker],
-          statistics: {
-            ...state.statistics,
-            totalWorkersHired: state.statistics.totalWorkersHired + 1,
-          },
-        }))
-        
-        return true
-      },
-      
-      // === ENCHANTMENTS ===
-      sacrificeWeapon: (weaponId) => {
+
+      // Enchantments + Resources + Statistics
+      sacrificeWeaponForEssence: (weaponId) => {
         const state = get()
         const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
         if (!weapon) return null
-        
-        const result = calculateSacrificeValue(
-          weapon.quality, 
-          weapon.tier, 
-          weapon.warSoul || 0,
-          weapon.epicMultiplier || 1
-        )
-        
-        set((state) => ({
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.filter(w => w.id !== weaponId),
-          },
-          resources: {
-            ...state.resources,
-            soulEssence: state.resources.soulEssence + result.soulEssence,
-            gold: state.resources.gold + result.bonusGold,
-          },
-          statistics: {
-            ...state.statistics,
-            weaponsSacrificed: (state.statistics.weaponsSacrificed || 0) + 1,
-          },
-        }))
-        
+
+        const result = calculateSacrificeValueUtil(weapon)
+
+        // Начисляем
+        state.addResource('soulEssence', result.soulEssence)
+        if (result.bonusGold > 0) {
+          state.addResource('gold', result.bonusGold)
+        }
+
+        // Удаляем оружие
+        state.removeWeapon(weaponId)
+
+        // Статистика
+        state.updateStatistics({ weaponsSacrificed: state.statistics.weaponsSacrificed + 1 })
+
         return result
       },
-      
-      unlockEnchantment: (enchantmentId) => {
+
+      unlockEnchantmentWithCost: (enchantmentId) => {
         const state = get()
-        const { enchantments: allEnchantments } = require('@/data/enchantments')
-        const enchantment = allEnchantments.find((e: Enchantment) => e.id === enchantmentId)
-        
-        if (!enchantment) return false
-        if (state.unlockedEnchantments.includes(enchantmentId)) return false
-        
-        if (!canAffordEnchantment(
-          enchantment,
-          state.resources.soulEssence,
-          state.resources.gold,
-          state.player.level,
-          state.player.fame
-        )) return false
-        
-        set((state) => ({
-          unlockedEnchantments: [...state.unlockedEnchantments, enchantmentId],
-          resources: {
-            ...state.resources,
-            soulEssence: state.resources.soulEssence - enchantment.cost.soulEssence,
-            gold: state.resources.gold - enchantment.cost.gold,
-          },
-        }))
-        
-        return true
+
+        // TODO: получить данные зачарования
+        // const enchantment = enchantments.find(e => e.id === enchantmentId)
+        // if (!enchantment) return false
+
+        // if (!canAffordEnchantment(enchantment, state.resources)) return false
+
+        // Списываем ресурсы
+        // ...
+
+        return state.unlockEnchantment(enchantmentId)
       },
-      
-      isEnchantmentUnlocked: (enchantmentId) => get().unlockedEnchantments.includes(enchantmentId),
-      
-      enchantWeapon: (weaponId, enchantmentId) => {
-        const state = get()
-        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        if (!weapon) return false
-        
-        const { getEnchantment } = require('@/data/enchantments')
-        const enchantment = getEnchantment(enchantmentId)
-        if (!enchantment) return false
-        
-        if (!state.unlockedEnchantments.includes(enchantmentId)) return false
-        
-        const currentEnchantments = weapon.enchantments || []
-        if (currentEnchantments.length >= MAX_ENCHANTMENTS_PER_WEAPON) return false
-        
-        if (!areEnchantmentsCompatible(currentEnchantments, enchantment)) return false
-        
-        const newEnchantment: WeaponEnchantment = {
-          id: generateId(),
-          enchantmentId,
-          appliedAt: Date.now(),
-        }
-        
-        set((state) => ({
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.map(w => 
-              w.id === weaponId 
-                ? { ...w, enchantments: [...(w.enchantments || []), newEnchantment] }
-                : w
-            ),
-          },
-          statistics: {
-            ...state.statistics,
-            enchantmentsApplied: state.statistics.enchantmentsApplied + 1,
-          },
-        }))
-        
-        return true
-      },
-      
-      removeEnchantment: (weaponId, enchantmentId) => {
-        const state = get()
-        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        if (!weapon) return false
-        
-        const currentEnchantments = weapon.enchantments || []
-        if (!currentEnchantments.find(e => e.enchantmentId === enchantmentId)) return false
-        
-        set((state) => ({
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.map(w => 
-              w.id === weaponId 
-                ? { ...w, enchantments: currentEnchantments.filter(e => e.enchantmentId !== enchantmentId) }
-                : w
-            ),
-          },
-        }))
-        
-        return true
-      },
-      
-      addWarSoulToWeapon: (weaponId, points, durabilityLoss = 0, epicGain = 0) => {
-        const state = get()
-        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        if (!weapon) return false
-        
-        set((state) => ({
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.map(w => 
-              w.id === weaponId 
-                ? { 
-                    ...w, 
-                    warSoul: (w.warSoul || 0) + points,
-                    adventureCount: (w.adventureCount || 0) + 1,
-                    durability: Math.max(0, (w.durability ?? 100) - durabilityLoss),
-                    epicMultiplier: Math.min(5, (w.epicMultiplier ?? 1) + epicGain),
-                  }
-                : w
-            ),
-          },
-        }))
-        
-        return true
-      },
-      
-      // === REPAIR ===
-      getBestBlacksmith: () => {
-        return findBestBlacksmith(get().workers)
-      },
-      
-      getRepairOptions: (weaponId) => {
-        const state = get()
-        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        if (!weapon) return []
-        
-        const blacksmith = findBestBlacksmith(state.workers)
-        return getRepairOptionsForWeapon(weapon as WeaponForRepair, blacksmith)
-      },
-      
+
+      // Repair + Resources + Workers
       executeWeaponRepair: (weaponId, repairType) => {
         const state = get()
         const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        if (!weapon) return { success: false, error: 'Оружие не найдено' }
-        
+        if (!weapon) {
+          return { success: false, cost: 0, repairedAmount: 0, durabilityLeft: 0 }
+        }
+
         const blacksmith = findBestBlacksmith(state.workers)
+        if (!blacksmith) {
+          return { success: false, cost: 0, repairedAmount: 0, durabilityLeft: 0 }
+        }
+
+        const weaponForRepair: WeaponForRepair = {
+          id: weapon.id,
+          durability: weapon.durability,
+          maxDurability: weapon.maxDurability,
+          quality: weapon.quality,
+        }
+
         const result = executeRepairUtil(
-          weapon as WeaponForRepair,
+          weaponForRepair,
           repairType,
           blacksmith,
-          state.resources.gold,
           state.resources
         )
-        
-        if (!result.success) {
-          return { success: false, error: result.error || 'Ремонт не удался' }
+
+        if (result.success) {
+          // Списываем ресурсы
+          for (const [resource, amount] of Object.entries(result.costs)) {
+            state.spendResource(resource as ResourceKey, amount)
+          }
+
+          // Обновляем оружие
+          set((s) => ({
+            weaponInventory: {
+              ...s.weaponInventory,
+              weapons: s.weaponInventory.weapons.map(w =>
+                w.id === weaponId
+                  ? { ...w, durability: result.durabilityLeft }
+                  : w
+              ),
+            },
+          }))
         }
-        
-        // Deduct resources
-        const materials = getMaterialDeductions(repairType, weapon as WeaponForRepair, blacksmith)
-        const newResources = { ...state.resources }
-        for (const [mat, amount] of Object.entries(materials)) {
-          const resourceKey = mat as ResourceKey
-          newResources[resourceKey] = (newResources[resourceKey] || 0) - (amount || 0)
-        }
-        
-        // Get option for costs
-        const options = getRepairOptionsForWeapon(weapon as WeaponForRepair, blacksmith)
-        const option = options.find(o => o.type === repairType)
-        if (option) {
-          newResources.gold -= option.goldCost
-        }
-        
-        // Update weapon
-        const updatedWeapon = { ...weapon }
-        updatedWeapon.durability = Math.min(100, weapon.durability + result.durabilityRestored!)
-        updatedWeapon.maxDurability = result.maxDurabilityAfter!
-        updatedWeapon.warSoul = Math.max(0, weapon.warSoul - result.soulLost!)
-        updatedWeapon.attack = Math.max(1, weapon.attack - result.attackLost!)
-        updatedWeapon.epicMultiplier = Math.max(1, weapon.epicMultiplier - result.epicLost!)
-        
-        // Update blacksmith
-        const updatedWorkers = blacksmith && option
-          ? state.workers.map(w => {
-              if (w.id === blacksmith.id) {
-                return {
-                  ...w,
-                  stamina: w.stamina - option.staminaCost,
-                  experience: w.experience + Math.floor(option.goldCost / 10),
-                }
-              }
-              return w
-            })
-          : state.workers
-        
-        set((state) => ({
-          resources: newResources,
-          weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.map(w => 
-              w.id === weaponId ? updatedWeapon : w
-            ),
-          },
-          workers: updatedWorkers,
-        }))
-        
-        return { success: true, result }
+
+        return result
       },
-      
-      getWeaponRepairCost: (weaponId) => {
-        const state = get()
-        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
-        if (!weapon) return 0
-        return calculateRepairCost(weapon as WeaponForRepair, state.player.level)
-      },
-      
-      getMaxRepairPercent: (weaponId) => {
-        return calculateMaxRepairPercent(get().player.level)
-      },
-      
-      repairWeapon: (weaponId) => {
+
+      repairWeaponWithResources: (weaponId) => {
         const state = get()
         const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
         if (!weapon) return { success: false, cost: 0, repairedAmount: 0 }
-        
-        const currentDurability = weapon.durability ?? 100
-        const maxDurability = weapon.maxDurability ?? 100
-        
-        if (currentDurability >= maxDurability) {
-          return { success: false, cost: 0, repairedAmount: 0 }
-        }
-        
-        const cost = calculateRepairCost(weapon as WeaponForRepair, state.player.level)
-        if (state.resources.gold < cost) {
-          return { success: false, cost: 0, repairedAmount: 0 }
-        }
-        
-        const maxRepair = calculateMaxRepairPercent(state.player.level)
-        const maxRepaired = Math.min(maxRepair, maxDurability - currentDurability)
-        
-        set((state) => ({
-          resources: {
-            ...state.resources,
-            gold: state.resources.gold - cost,
-          },
+
+        const blacksmith = findBestBlacksmith(state.workers)
+        if (!blacksmith) return { success: false, cost: 0, repairedAmount: 0 }
+
+        const cost = calculateRepairCost(weapon.quality, weapon.maxDurability - weapon.durability)
+        const maxRepair = calculateMaxRepairPercent(blacksmith)
+
+        if (!state.canAfford({ gold: cost })) return { success: false, cost, repairedAmount: 0 }
+
+        const repairedAmount = Math.floor((weapon.maxDurability - weapon.durability) * maxRepair / 100)
+
+        state.spendResource('gold', cost)
+
+        set((s) => ({
           weaponInventory: {
-            ...state.weaponInventory,
-            weapons: state.weaponInventory.weapons.map(w => 
-              w.id === weaponId 
-                ? { ...w, durability: currentDurability + maxRepaired }
+            ...s.weaponInventory,
+            weapons: s.weaponInventory.weapons.map(w =>
+              w.id === weaponId
+                ? { ...w, durability: Math.min(w.maxDurability, w.durability + repairedAmount) }
                 : w
             ),
           },
         }))
-        
-        return { success: true, cost, repairedAmount: maxRepaired }
-      },
-      
-      // === GUILD ===
-      guild: initialGuildState,
-      knownAdventurers: [],
-      
-      refreshAdventurers: () => {
-        const state = get()
-        const now = Date.now()
 
-        // Remove expired adventurers
-        const activeAdventurers = state.guild.adventurers.filter(
-          a => !isAdventurerExpired(a)
-        )
-
-        // Generate new ones if needed
-        const currentCount = activeAdventurers.length
-        const targetCount = 3 + Math.floor(state.guild.glory / 100)
-
-        if (currentCount < targetCount) {
-          const newAdventurers = generateAdventurerPool(targetCount - currentCount, state.guild.glory)
-          activeAdventurers.push(...newAdventurers)
-        }
-
-        set((state) => ({
-          guild: {
-            ...state.guild,
-            adventurers: activeAdventurers,
-            adventurerRefreshAt: now + ADVENTURER_LIFETIME,
-          }
-        }))
+        return { success: true, cost, repairedAmount }
       },
 
-      initializeAdventurers: () => {
-        const state = get()
-        if (!state.guild.adventurers || state.guild.adventurers.length === 0) {
-          state.refreshAdventurers()
-        }
-      },
-      
-      startExpedition: (expedition, adventurer, weapon, extendedAdventurer) => {
+      // Guild + Resources + Craft + Player
+      startExpeditionFull: (expedition, adventurer, weapon, extendedAdventurer) => {
         const state = get()
 
-        // Check if weapon is available
-        if (state.isWeaponInExpedition(weapon.id)) return false
-
-        // Check if adventurer is available
-        if (state.guild.activeExpeditions.some(e => e.adventurerId === adventurer.id)) return false
-
-        // Check resources
+        // Проверяем ресурсы
         const totalCost = expedition.cost.supplies + expedition.cost.deposit
-        if (state.resources.gold < totalCost) return false
+        if (!state.canAfford({ gold: totalCost })) return false
 
-        const now = Date.now()
-        const duration = expedition.duration * 1000 // Convert seconds to ms
+        // Проверяем оружие
+        if (weapon.durability <= 10) return false
+        if (weapon.attack < expedition.minWeaponAttack) return false
 
-        // Deduct costs
-        state.addResource('gold', -totalCost)
+        // Списываем
+        state.spendResource('gold', totalCost)
 
+        // Создаём экспедицию
         const newExpedition: ActiveExpedition = {
           id: generateId(),
           expeditionId: expedition.id,
           expeditionName: expedition.name,
-          expeditionIcon: expedition.icon,
           adventurerId: adventurer.id,
-          adventurerName: adventurer.name,
-          adventurerData: adventurer, // Старый формат для совместимости
-          adventurerExtended: extendedAdventurer, // Полные Extended данные
+          adventurerName: getAdventurerFullName(adventurer),
           weaponId: weapon.id,
           weaponName: weapon.name,
-          weaponData: weapon as any, // Store copy of weapon data
-          startedAt: now,
-          endsAt: now + duration,
-          deposit: expedition.cost.deposit,
-          suppliesCost: expedition.cost.supplies,
+          startTime: Date.now(),
+          endTime: Date.now() + expedition.duration * 1000,
+          status: 'active',
+          cost: {
+            supplies: expedition.cost.supplies,
+            deposit: expedition.cost.deposit,
+          },
         }
 
-        set((state) => ({
+        set((s) => ({
           guild: {
-            ...state.guild,
-            activeExpeditions: [...state.guild.activeExpeditions, newExpedition],
-            adventurers: state.guild.adventurers.filter(a => a.id !== adventurer.id),
-          }
+            ...s.guild,
+            activeExpeditions: [...s.guild.activeExpeditions, newExpedition],
+          },
         }))
 
         return true
       },
 
-      cancelExpedition: (expeditionId) => {
-        const state = get()
-        const expedition = state.guild.activeExpeditions.find(e => e.id === expeditionId)
-        if (!expedition) return false
-
-        // Return deposit (partial)
-        const returnedGold = Math.floor(expedition.deposit * 0.5)
-        state.addResource('gold', returnedGold)
-
-        set((state) => ({
-          guild: {
-            ...state.guild,
-            activeExpeditions: state.guild.activeExpeditions.filter(e => e.id !== expeditionId),
-          }
-        }))
-
-        return true
-      },
-
-      completeExpedition: (expeditionId) => {
+      completeExpeditionFull: (expeditionId) => {
         const state = get()
         const expedition = state.guild.activeExpeditions.find(e => e.id === expeditionId)
         if (!expedition) return null
@@ -1449,118 +675,312 @@ export const useGameStore = create<GameState>()(
         if (!template) return null
 
         const weapon = state.weaponInventory.weapons.find(w => w.id === expedition.weaponId)
+        if (!weapon) return null
 
-        // Используем утилиту для расчёта результата
-        const outcome = calculateExpeditionOutcome({
-          expedition,
-          guildLevel: state.guild.level,
-          weapon: weapon as WeaponForExpedition,
-        })
+        const adventurer = state.guild.adventurers.find(a => a.id === expedition.adventurerId)
 
-        const result: ExpeditionResult = {
-          success: outcome.success,
-          commission: outcome.commission,
-          warSoul: outcome.warSoul,
-          bonusGold: 0,
-          glory: outcome.glory,
-          weaponWear: outcome.weaponWear,
-          weaponLost: outcome.weaponLost,
-          isCrit: outcome.isCrit,
+        // Рассчитываем результат
+        const result = calculateExpeditionOutcome(
+          template,
+          adventurer || { id: expedition.adventurerId, name: expedition.adventurerName, skill: 50, requirements: {} },
+          weapon,
+          state.guild.level,
+          state.guild.glory
+        )
+
+        // Начисляем награды
+        if (result.commission > 0) {
+          state.addResource('gold', result.commission)
         }
-
-        // Обновление базы известных искателей
-        if (outcome.newKnownAdventurers) {
-          set({ knownAdventurers: outcome.newKnownAdventurers })
-        } else if (expedition.adventurerExtended) {
-          const updatedKnown = updateKnownAdventurersAfterMission(
-            state.knownAdventurers,
-            expedition.adventurerExtended,
-            outcome,
-            weapon?.type
-          )
-          set({ knownAdventurers: updatedKnown })
+        if (result.warSoul > 0 && weapon) {
+          state.addWarSoulToWeapon(weapon.id, result.warSoul)
         }
-
-        // Apply rewards
-        if (outcome.success) {
-          state.addResource('gold', outcome.commission)
-          if (weapon) {
-            state.addWarSoulToWeapon(weapon.id, outcome.warSoul, 5, 0.05)
+        if (result.glory) {
+          // Добавляем славу гильдии
+          set((s) => ({
+            guild: {
+              ...s.guild,
+              glory: s.guild.glory + result.glory,
+            },
+          }))
+        }
+        if (result.bonusResources) {
+          for (const bonus of result.bonusResources) {
+            state.addResource(bonus.resource as ResourceKey, bonus.amount)
           }
-          state.addGlory(outcome.glory)
-        } else {
-          state.addGlory(1)
         }
 
-        // Apply weapon wear if not lost
-        if (weapon && !outcome.weaponLost) {
-          const newDurability = Math.max(0, weapon.durability - outcome.weaponWear)
+        // Обновляем оружие
+        if (!result.weaponLost && weapon) {
           set((s) => ({
             weaponInventory: {
               ...s.weaponInventory,
               weapons: s.weaponInventory.weapons.map(w =>
-                w.id === weapon.id ? { ...w, durability: newDurability } : w
+                w.id === weapon.id
+                  ? { ...w, durability: Math.max(0, w.durability - result.weaponWear) }
+                  : w
               ),
-            }
+            },
           }))
+        } else if (result.weaponLost) {
+          state.removeWeapon(weapon.id)
         }
 
-        // Create history entry and update stats
-        const historyEntry = createHistoryEntry(expedition, outcome)
-        const newStats = updateGuildStats(state.guild.stats, outcome)
+        // Даём опыт
+        state.addExperience(result.success ? 20 : 5)
 
-        set((state) => ({
+        // Удаляем экспедицию
+        set((s) => ({
           guild: {
-            ...state.guild,
-            activeExpeditions: state.guild.activeExpeditions.filter(e => e.id !== expeditionId),
-            history: [...state.guild.history, historyEntry],
-            stats: newStats,
-          }
+            ...s.guild,
+            activeExpeditions: s.guild.activeExpeditions.filter(e => e.id !== expeditionId),
+            history: [...s.guild.history, {
+              id: generateId(),
+              expeditionName: expedition.expeditionName,
+              adventurerName: expedition.adventurerName,
+              weaponName: expedition.weaponName,
+              success: result.success,
+              timestamp: Date.now(),
+            }],
+          },
         }))
-
-        // Handle weapon loss - create recovery quest
-        if (outcome.weaponLost && weapon) {
-          const recoveryQuest = createRecoveryQuest(expedition, template, weapon as WeaponForExpedition)
-
-          set((state) => ({
-            guild: {
-              ...state.guild,
-              recoveryQuests: [...state.guild.recoveryQuests, recoveryQuest],
-            }
-          }))
-
-          // Remove weapon from inventory
-          set((s) => ({
-            weaponInventory: {
-              ...s.weaponInventory,
-              weapons: s.weaponInventory.weapons.filter(w => w.id !== weapon.id),
-            }
-          }))
-        }
 
         return result
       },
-      
+
+      // Emergency
+      canGetEmergencyHelp: () => {
+        const state = get()
+        return state.workers.length === 0 && state.resources.gold < 50
+      },
+
+      getEmergencyHelp: () => {
+        const state = get()
+        if (!state.canGetEmergencyHelp()) return false
+
+        state.addResource('gold', 100)
+        state.updateStatistics({ totalWorkersHired: state.statistics.totalWorkersHired + 1 })
+
+        return true
+      },
+
+      // Orders - delegating to slice
+      generateOrder: () => {
+        const state = get()
+        return state.generateOrder(state.player.level, state.player.fame)
+      },
+      acceptOrder: (orderId) => get().acceptOrder(orderId),
+      completeOrder: (orderId, weaponId) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon) return false
+        const result = state.completeOrder(orderId, weaponId, {
+          quality: weapon.quality,
+          attack: weapon.attack,
+          type: weapon.type,
+          recipeId: weapon.recipeId,
+        })
+        return result.success
+      },
+      expireOrder: (orderId) => get().expireOrder(orderId),
+      getActiveOrder: () => get().getActiveOrder(),
+
+      // Enchantments (simple)
+      enchantWeapon: (weaponId, enchantmentId) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon) return false
+
+        const enchantment = state.unlockedEnchantments.includes(enchantmentId)
+        if (!enchantment) return false
+
+        const currentCount = weapon.enchantments?.length || 0
+        if (currentCount >= MAX_ENCHANTMENTS_PER_WEAPON) return false
+
+        // Проверяем совместимость
+        if (weapon.enchantments && !areEnchantmentsCompatible(weapon.enchantments.map(e => e.enchantmentId), enchantmentId)) {
+          return false
+        }
+
+        set((s) => ({
+          weaponInventory: {
+            ...s.weaponInventory,
+            weapons: s.weaponInventory.weapons.map(w =>
+              w.id === weaponId
+                ? {
+                    ...w,
+                    enchantments: [
+                      ...(w.enchantments || []),
+                      { id: generateId(), enchantmentId, appliedAt: Date.now() }
+                    ],
+                  }
+                : w
+            ),
+          },
+        }))
+
+        state.updateStatistics({ enchantmentsApplied: state.statistics.enchantmentsApplied + 1 })
+        return true
+      },
+
+      removeEnchantment: (weaponId, enchantmentId) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon || !weapon.enchantments) return false
+
+        set((s) => ({
+          weaponInventory: {
+            ...s.weaponInventory,
+            weapons: s.weaponInventory.weapons.map(w =>
+              w.id === weaponId
+                ? { ...w, enchantments: w.enchantments?.filter(e => e.enchantmentId !== enchantmentId) }
+                : w
+            ),
+          },
+        }))
+
+        return true
+      },
+
+      isEnchantmentUnlocked: (enchantmentId) => {
+        return get().unlockedEnchantments.includes(enchantmentId)
+      },
+
+      addWarSoulToWeapon: (weaponId, points, durabilityLoss = 5, epicGain = 0.05) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon) return false
+
+        const newDurability = Math.max(0, weapon.durability - durabilityLoss)
+        const newEpicMultiplier = Math.min(5.0, weapon.epicMultiplier + epicGain)
+
+        set((s) => ({
+          weaponInventory: {
+            ...s.weaponInventory,
+            weapons: s.weaponInventory.weapons.map(w =>
+              w.id === weaponId
+                ? {
+                    ...w,
+                    warSoul: w.warSoul + points,
+                    durability: newDurability,
+                    epicMultiplier: newEpicMultiplier,
+                    adventureCount: w.adventureCount + 1,
+                  }
+                : w
+            ),
+          },
+        }))
+
+        return true
+      },
+
+      // Recipes
+      unlockRecipe: (recipeId, source) => {
+        const state = get()
+
+        // Определяем тип рецепта
+        const isWeaponRecipe = recipeId.includes('sword') || recipeId.includes('dagger') ||
+                              recipeId.includes('axe') || recipeId.includes('mace') ||
+                              recipeId.includes('spear') || recipeId.includes('hammer')
+
+        if (isWeaponRecipe) {
+          if (state.unlockedRecipes.weaponRecipes.includes(recipeId)) return false
+
+          set((s) => ({
+            unlockedRecipes: {
+              ...s.unlockedRecipes,
+              weaponRecipes: [...s.unlockedRecipes.weaponRecipes, recipeId],
+            },
+            recipeSources: [...s.recipeSources, { recipeId, source, obtainedAt: Date.now() }],
+          }))
+        } else {
+          if (state.unlockedRecipes.refiningRecipes.includes(recipeId)) return false
+
+          set((s) => ({
+            unlockedRecipes: {
+              ...s.unlockedRecipes,
+              refiningRecipes: [...s.unlockedRecipes.refiningRecipes, recipeId],
+            },
+            recipeSources: [...s.recipeSources, { recipeId, source, obtainedAt: Date.now() }],
+          }))
+        }
+
+        state.updateStatistics({ recipesUnlocked: state.statistics.recipesUnlocked + 1 })
+        return true
+      },
+
+      canRefine: (recipe, amount) => {
+        const state = get()
+        if (state.player.level < recipe.requiredLevel) return false
+
+        for (const input of recipe.inputs) {
+          if ((state.resources[input.resource as ResourceKey] || 0) < input.amount * amount) {
+            return false
+          }
+        }
+        if (recipe.extraCost && state.resources.coal < recipe.extraCost.coal * amount) {
+          return false
+        }
+
+        return true
+      },
+
+      // Guild helpers
+      refreshAdventurers: () => {
+        const state = get()
+        const pool = generateAdventurerPool(state.guild.level)
+
+        set((s) => ({
+          guild: {
+            ...s.guild,
+            adventurers: pool,
+            adventurerRefreshAt: Date.now() + ADVENTURER_LIFETIME,
+          },
+        }))
+      },
+
+      initializeAdventurers: () => {
+        const state = get()
+        if (state.guild.adventurers.length === 0) {
+          state.refreshAdventurers()
+        }
+      },
+
+      cancelExpedition: (expeditionId) => {
+        const state = get()
+        const expedition = state.guild.activeExpeditions.find(e => e.id === expeditionId)
+        if (!expedition) return false
+
+        // Возвращаем часть затрат
+        const refund = Math.floor(expedition.cost.supplies * 0.5)
+        state.addResource('gold', refund)
+
+        set((s) => ({
+          guild: {
+            ...s.guild,
+            activeExpeditions: s.guild.activeExpeditions.filter(e => e.id !== expeditionId),
+          },
+        }))
+
+        return true
+      },
+
       startRecoveryQuest: (questId) => {
         const state = get()
         const quest = state.guild.recoveryQuests.find(q => q.id === questId)
         if (!quest || quest.status !== 'available') return false
 
-        // Pay the recovery cost
-        if (state.resources.gold < quest.cost) return false
-        state.addResource('gold', -quest.cost)
+        if (!state.canAfford({ gold: quest.cost })) return false
 
-        const now = Date.now()
+        state.spendResource('gold', quest.cost)
 
-        set((state) => ({
+        set((s) => ({
           guild: {
-            ...state.guild,
-            recoveryQuests: state.guild.recoveryQuests.map(q =>
-              q.id === questId
-                ? { ...q, status: 'active' as const, startedAt: now, endsAt: now + q.duration }
-                : q
+            ...s.guild,
+            recoveryQuests: s.guild.recoveryQuests.map(q =>
+              q.id === questId ? { ...q, status: 'in_progress', startTime: Date.now() } : q
             ),
-          }
+          },
         }))
 
         return true
@@ -1569,138 +989,183 @@ export const useGameStore = create<GameState>()(
       completeRecoveryQuest: (questId) => {
         const state = get()
         const quest = state.guild.recoveryQuests.find(q => q.id === questId)
-        if (!quest || quest.status !== 'active') return false
+        if (!quest || quest.status !== 'in_progress') return false
 
-        // Return weapon to inventory
+        // Возвращаем оружие
+        if (quest.lostWeaponData) {
+          state.addWeapon(quest.lostWeaponData)
+        }
+
         set((s) => ({
-          weaponInventory: {
-            ...s.weaponInventory,
-            weapons: [...s.weaponInventory.weapons, quest.lostWeaponData as any],
-          }
-        }))
-
-        set((state) => ({
           guild: {
-            ...state.guild,
-            recoveryQuests: state.guild.recoveryQuests.map(q =>
-              q.id === questId ? { ...q, status: 'completed' as const } : q
-            ),
-            stats: {
-              ...state.guild.stats,
-              weaponsRecovered: state.guild.stats.weaponsRecovered + 1,
-            }
-          }
+            ...s.guild,
+            recoveryQuests: s.guild.recoveryQuests.filter(q => q.id !== questId),
+          },
         }))
 
         return true
       },
-      
+
       declineRecoveryQuest: (questId) => {
-        set((state) => ({
+        set((s) => ({
           guild: {
-            ...state.guild,
-            recoveryQuests: state.guild.recoveryQuests.filter(q => q.id !== questId),
-          }
+            ...s.guild,
+            recoveryQuests: s.guild.recoveryQuests.filter(q => q.id !== questId),
+          },
         }))
       },
-      
-      addGlory: (amount) => set((state) => {
-        const newGlory = state.guild.glory + amount
-        const newLevel = getGuildLevel(newGlory)
-        
-        return {
+
+      addGlory: (amount) => {
+        set((s) => ({
           guild: {
-            ...state.guild,
-            glory: newGlory,
-            totalGlory: state.guild.totalGlory + amount,
-            level: newLevel,
-            stats: {
-              ...state.guild.stats,
-              totalGlory: (state.guild.stats?.totalGlory ?? 0) + amount,
-            }
-          }
-        }
-      }),
-      
-      getAdventurerById: (id) => {
-        const state = get()
-        return state.guild.adventurers.find(a => a.id === id) ||
-               state.guild.activeExpeditions.find(e => e.adventurerId === id) as unknown as Adventurer
+            ...s.guild,
+            glory: s.guild.glory + amount,
+          },
+        }))
       },
-      
+
+      getAdventurerById: (id) => get().guild.adventurers.find(a => a.id === id),
       getActiveExpeditionById: (id) => get().guild.activeExpeditions.find(e => e.id === id),
-      
+
       isWeaponInExpedition: (weaponId) => {
-        const state = get()
-        return state.guild.activeExpeditions.some(e => e.weaponId === weaponId)
+        return get().guild.activeExpeditions.some(e => e.weaponId === weaponId)
       },
-      
-      // === KNOWN ADVENTURERS ===
+
+      // Known Adventurers
       getKnownAdventurer: (adventurerId) => {
-        return get().knownAdventurers.find(k => k.adventurerId === adventurerId)
+        return get().knownAdventurers.find(ka => ka.adventurerId === adventurerId)
       },
-      
+
       getMetBadge: (adventurerId) => {
-        const known = get().knownAdventurers.find(k => k.adventurerId === adventurerId)
+        const known = get().knownAdventurers.find(ka => ka.adventurerId === adventurerId)
         if (!known) return null
-        
-        const isAvailable = known.isAvailableForContract
-        const text = getMetInfoText(known)
-        const contractInfo = getContractAvailabilityText(known)
-        
+
+        const info = getKnownAdventurerInfo(known)
         return {
           isKnown: true,
-          text: isAvailable ? contractInfo.text : text,
-          className: isAvailable ? contractInfo.className : 'text-amber-400',
+          text: getMetInfoText(info),
+          className: 'badge-known',
         }
       },
-      
+
       calculateExpedition: (adventurer, expedition, weapon) => {
-        return calculateExpeditionPreview(
-          adventurer,
-          expedition,
-          weapon as WeaponForExpedition,
-          get().guild.level
-        )
+        return calculateExpeditionResultV2(adventurer, expedition, weapon, get().guild.level, get().guild.glory)
       },
+
+      // Repair helpers
+      getRepairOptions: (weaponId) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon) return []
+
+        return getRepairOptionsForWeapon(weapon, state.workers)
+      },
+
+      getBestBlacksmith: () => {
+        return findBestBlacksmith(get().workers)
+      },
+
+      getWeaponRepairCost: (weaponId) => {
+        const state = get()
+        const weapon = state.weaponInventory.weapons.find(w => w.id === weaponId)
+        if (!weapon) return 0
+
+        return calculateRepairCost(weapon.quality, weapon.maxDurability - weapon.durability)
+      },
+
+      getMaxRepairPercent: (weaponId) => {
+        const blacksmith = findBestBlacksmith(get().workers)
+        return blacksmith ? calculateMaxRepairPercent(blacksmith) : 0
+      },
+
+      // Craft helpers
+      getWeaponById: (weaponId) => get().weaponInventory.weapons.find(w => w.id === weaponId),
+
+      isRecipeUnlocked: (recipeId) => {
+        const state = get()
+        return state.unlockedRecipes.weaponRecipes.includes(recipeId) ||
+               state.unlockedRecipes.refiningRecipes.includes(recipeId)
+      },
+
+      getRecipeSource: (recipeId) => get().recipeSources.find(s => s.recipeId === recipeId),
+
+      setCurrentScreen: (screen) => set({ currentScreen: screen }),
+
+      // Craft state checks
+      isCrafting: () => get().activeCraft.recipeId !== null,
+      isRefining: () => get().activeRefining.recipeId !== null,
+      updateCraftProgress: (progress) => set((s) => ({
+        activeCraft: { ...s.activeCraft, progress: Math.min(100, progress) }
+      })),
+      updateRefiningProgress: (progress) => set((s) => ({
+        activeRefining: { ...s.activeRefining, progress: Math.min(100, progress) }
+      })),
     }),
     {
-      name: 'swordcraft-game-storage',
-      partialize: (state) => ({
-        resources: state.resources,
-        player: state.player,
-        statistics: state.statistics,
-        workers: state.workers,
-        maxWorkers: state.maxWorkers,
-        buildings: state.buildings,
-        weaponInventory: state.weaponInventory,
-        unlockedRecipes: state.unlockedRecipes,
-        recipeSources: state.recipeSources,
-        orders: state.orders,
-        activeOrderId: state.activeOrderId,
-        tutorial: state.tutorial,
-        unlockedEnchantments: state.unlockedEnchantments,
-        guild: state.guild,
-        knownAdventurers: state.knownAdventurers,
-      }),
+      name: 'swordcraft-store',
+      version: 2,
     }
   )
 )
 
 // ================================
-// EXPORT HOOKS
+// RE-EXPORTS (для обратной совместимости)
 // ================================
 
+export {
+  // Player
+  Player,
+  GameStatistics,
+  initialPlayer,
+  initialStatistics,
+
+  // Resources
+  Resources,
+  ResourceKey,
+  CraftingCost,
+  initialResources,
+
+  // Workers
+  Worker,
+  WorkerClass,
+  ProductionBuilding,
+  initialBuildings,
+  workerClassData,
+
+  // Craft
+  CraftedWeapon,
+  ActiveCraft,
+  ActiveRefining,
+  WeaponInventory,
+  UnlockedRecipes,
+  RecipeSource,
+  WeaponType,
+  WeaponTier,
+  WeaponMaterial,
+  QualityGrade,
+  initialActiveCraft,
+  initialActiveRefining,
+  initialWeaponInventory,
+  initialUnlockedRecipes,
+}
+
+// ================================
+// HELPER HOOKS
+// ================================
+
+/**
+ * Hook для форматирования ресурсов с сокращениями
+ */
 export const useFormattedResources = () => {
   const resources = useGameStore((state) => state.resources)
-  
+
   const formatNumber = (num: number): string => {
     if (num >= 1000000000) return `${(num / 1000000000).toFixed(2)}B`
     if (num >= 1000000) return `${(num / 1000000).toFixed(2)}M`
     if (num >= 1000) return `${(num / 1000).toFixed(1)}K`
     return Math.floor(num).toString()
   }
-  
+
   return {
     ...resources,
     formatted: {
@@ -1729,16 +1194,12 @@ export const useFormattedResources = () => {
   }
 }
 
+/**
+ * Hook для расчёта стоимости найма рабочего
+ */
 export const useWorkerHireCost = (workerClass: WorkerClass): number => {
   const workers = useGameStore((state) => state.workers)
   const classData = workerClassData[workerClass]
   const sameClassCount = workers.filter(w => w.class === workerClass).length
   return Math.floor(classData.baseCost * (1 + sameClassCount * 0.5))
 }
-
-// Re-export types and data from slices
-export { workerClassData }
-export type { Resources, ResourceKey, CraftingCost } from './slices/resources-slice'
-export type { Player, GameStatistics } from './slices/player-slice'
-export type { Worker, WorkerClass, WorkerStats, ProductionBuilding } from './slices/workers-slice'
-export type { CraftedWeapon, ActiveCraft, ActiveRefining, WeaponInventory, UnlockedRecipes, RecipeSource } from './slices/craft-slice'

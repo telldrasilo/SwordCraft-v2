@@ -1,11 +1,11 @@
 /**
  * Store Entry Point
- * Экспорт composed store v2 (модульная архитектура)
+ * Модульная архитектура store (slices + utils + composed)
  * 
  * @see docs/REFACTORING_PLAN.md - план рефакторинга
  */
 
-// Основные экспорты из v2
+// Основные экспорты
 export {
   useGameStore,
   // Типы
@@ -38,12 +38,12 @@ export {
   initialUnlockedRecipes,
   // Данные
   workerClassData,
-} from './game-store-composed-v2'
+} from './game-store-composed'
 
 // Типы из slices
 export type { NPCOrder, OrderStatus, OrderBonusItem } from './slices/orders-slice'
 export type { TutorialState } from './slices/tutorial-slice'
 export type { WorkerStats, WorkerClass } from './slices/workers-slice'
 
-// Hooks (утилиты) - из v2
-export { useFormattedResources, useWorkerHireCost } from './game-store-composed-v2'
+// Hooks (утилиты)
+export { useFormattedResources, useWorkerHireCost } from './game-store-composed'

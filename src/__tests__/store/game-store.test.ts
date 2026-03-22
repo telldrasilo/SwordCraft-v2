@@ -1,14 +1,14 @@
 /**
- * E2E тесты для Game Store v2
+ * E2E тесты для Game Store
  * Базовые тесты работающие с реальным API
  * 
  * @vitest-environment jsdom
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useGameStore } from '@/store/game-store-composed-v2'
+import { useGameStore } from '@/store/game-store-composed'
 
-describe('game-store-v2 integration', () => {
+describe('game-store integration', () => {
   let store: ReturnType<typeof useGameStore.getState>
 
   beforeEach(() => {
