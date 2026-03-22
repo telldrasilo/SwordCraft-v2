@@ -387,6 +387,7 @@ export const createCraftSlice: StateCreator<
 export { generateId, getQualityGrade, getQualityMultiplier }
 
 // Экспорт типов для использования в game-store
+// Re-export all types for Turbopack compatibility
 export type {
   ActiveCraft,
   ActiveRefining,
@@ -395,4 +396,12 @@ export type {
   RecipeSource,
   WeaponEnchantment,
   WeaponMaterialUsed,
+  CraftedWeapon,
+  CraftSlice,
+  CraftState,
+  CraftActions,
+  WeaponType,
+  WeaponTier,
+  WeaponMaterial,
+  QualityGrade,
 }
